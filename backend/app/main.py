@@ -41,37 +41,31 @@ app.mount("/static", StaticFiles(directory=STATIC_DIR), name="static")
 logger.info(f"Mounted static directory '{STATIC_DIR}' at '/static'.")
 
 # --- CORS Middleware ---
-# 允許特定域名的跨域請求，包括生產環境中的IP地址
+# 允許本地開發與正式前端
 origins = [
     "http://localhost",
-    "http://localhost:5173",  # 本地開發環境
+    "http://localhost:5173",
     "http://127.0.0.1:5173",
-    "http://120.126.151.101",
-    "http://120.126.151.101:5173",  # 生產環境 IP 地址
-    # 添加任何其他需要的域名
+    "https://frontend.simworld.website",  # ✅ Cloudflare 前端
 ]
 
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=origins,  # 使用明確的域名列表而不是 ["*"]
+    allow_origins=origins,
     allow_credentials=True,
-    allow_methods=["*"],  # 允許所有方法
-    allow_headers=["*"],  # 允許所有頭部
+    allow_methods=["*"],
+    allow_headers=["*"],
 )
-logger.info("CORS middleware added with specific origins.")
-
+logger.info(f"CORS middleware added with origins: {origins}")
 
 # --- Test Endpoint (Before API v1 Router) ---
 @app.get("/ping", tags=["Test"])
 async def ping():
     return {"message": "pong"}
 
-
 # --- Include API Routers ---
-# Include the router for API version 1
 app.include_router(api_router, prefix="/api/v1")  # Add a /api/v1 prefix
 logger.info("Included API router v1 at /api/v1.")
-
 
 # --- Root Endpoint ---
 @app.get("/", tags=["Root"])
@@ -80,24 +74,17 @@ async def read_root():
     logger.info("--- Root endpoint '/' requested ---")
     return {"message": "Welcome to the Sionna RT Simulation API"}
 
-
 # --- Uvicorn Entry Point (for direct run, if needed) ---
-# Note: Running directly might skip lifespan events unless using uvicorn programmatically
 if __name__ == "__main__":
     import uvicorn
-
     logger.info(
         "Starting Uvicorn server directly (use 'docker compose up' for full setup)..."
     )
-    # This won't properly run the lifespan events like DB init unless configured differently.
-    # Recommended to run via Docker Compose or `uvicorn app.main:app --reload` from the backend directory.
-    uvicorn.run(app, host="0.0.0.0", port=8000)
+    uvicorn.run(app, host="0.0.0.0", port=8888)
 
-logger.info(
-    "FastAPI application setup complete. Ready for Uvicorn via external command."
-)
+logger.info("FastAPI application setup complete. Ready for Uvicorn via external command.")
 
-
+# --- Lifespan Context Manager ---
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     """應用生命週期管理 - CQRS 版本"""

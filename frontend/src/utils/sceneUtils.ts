@@ -31,9 +31,9 @@ export const SCENE_COORDINATE_TRANSFORMS = {
         scale: 1.0,
     },
     ntpu: {
-        offsetX: 900,
-        offsetY: 620,
-        scale: 1.0,
+        offsetX: 896,
+        offsetY: 640,
+        scale: 0.98,
     },
     nanliao: {
         offsetX: 920,
