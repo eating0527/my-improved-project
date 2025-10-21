@@ -33,3 +33,6 @@ Thumbs.db
 # VS Code
 .vscode/
 *.code-workspace
+
+# 忽略上傳的照片
+backend/app/uploads/

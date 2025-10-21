@@ -213,15 +213,15 @@ const MainScene: React.FC<MainSceneProps> = ({
             key={device.id ?? `user-${device.position_x}-${device.position_z}`}
             position={[
               device.position_x, // 東
-              device.position_y, // 高度 (safeY 已經算過)
+              device.position_y, // 高度
               device.position_z, // 北
             ]}
           >
             <sphereGeometry args={[20, 32, 32]} />
-            <meshStandardMaterial
-              color="blue"
+            <meshStandardMaterial 
+              color="blue" 
               emissive={0x0000ff}
-              emissiveIntensity={1}
+              emissiveIntensity={0.5}
             />
           </mesh>
         )

@@ -13,6 +13,7 @@ export const ENU_ORIGIN = {
   alt: 0
 };
 
+
 /**
  * 將 GPS 座標 (WGS84) 轉換為 ENU 座標
  * 可選 rotation（地圖旋轉角度，單位：度，正值為逆時針）
@@ -28,7 +29,7 @@ export function gpsToENU(
   const dLat = (lat - origin.lat) * Math.PI / 180;
   const dLon = (lon - origin.lon) * Math.PI / 180;
   let x = dLon * R * Math.cos(origin.lat * Math.PI / 180); // 東向
-  let y = dLat * R; // 北向
+  let y = -dLat * R; // 南北相反
   const z = (alt ?? 0) - origin.alt; // 上向
 
   // 加入 rotation（旋轉地圖座標）

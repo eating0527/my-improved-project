@@ -16,6 +16,7 @@ import { VisibleSatelliteInfo } from "./types/satellite";
 import "./styles/Dashboard.scss";
 import UserLocation from "./components/UserLocation"; // ✅ 掛上定位元件
 import UploadPhoto from "./components/UploadPhoto";
+import CameraUpload from "./components/CameraUpload"; // 📷 新增拍照上傳組件
 
 console.log("Origin LAT:", import.meta.env.VITE_ORIGIN_LAT);
 
@@ -28,6 +29,7 @@ function App({ activeView }: AppProps) {
   const { scenes } = useParams<{ scenes: string }>();
   const currentScene = scenes || "nycu";
   const initialComponent = activeView === "stereogram" ? "3DRT" : "2DRT";
+
 
   const {
     tempDevices,
@@ -192,6 +194,12 @@ function App({ activeView }: AppProps) {
     [selectedReceiverIds, updateDevicePositionFromUAV]
   );
 
+  // 📷 處理照片上傳成功
+  const handleUploadSuccess = (filename: string) => {
+    console.log('✅ 照片上傳成功:', filename);
+    // 可以在這裡做其他處理，例如顯示通知
+  };
+
   const renderActiveComponent = useCallback(() => {
     switch (activeComponent) {
       case "2DRT":
@@ -248,11 +256,21 @@ function App({ activeView }: AppProps) {
       <UserLocation
         origin={origin}
         scale={scale}
-       
         upsertDevice={(d) => {
-          console.log("📡 更新 user device:", d); // debug log
+          console.log("📡 更新 user device:", d);
           setTempDevices((prev) => {
             const i = prev.findIndex((x) => x.id === d.id);
+            // 檢查是否真的有變化
+            if (i !== -1) {
+              const existing = prev[i];
+              if (
+                existing.position_x === d.position_x &&
+                existing.position_y === d.position_y &&
+                existing.position_z === d.position_z
+              ) {
+                return prev; // 沒變化就不更新
+              }
+            }
             if (i === -1) return [...prev, d];
             const next = prev.slice();
             next[i] = { ...prev[i], ...d };
@@ -264,7 +282,9 @@ function App({ activeView }: AppProps) {
 
       {/* 📸 掛上自動上傳元件 */}
       <UploadPhoto uploadUrl="https://your-backend-api/upload-image" />
-     
+
+      {/* 📷 掛上拍照上傳組件 */}
+      <CameraUpload onUploadSuccess={handleUploadSuccess} />
 
       <ErrorBoundary>
         <div className="app-container">
