@@ -14,12 +14,14 @@ import { countActiveDevices } from "./utils/deviceUtils";
 import { useDevices } from "./hooks/useDevices";
 import { VisibleSatelliteInfo } from "./types/satellite";
 import "./styles/Dashboard.scss";
-import UserLocation from "./components/UserLocation"; // ✅ 掛上定位元件
+import UserLocation from "./components/UserLocation";
+import TxInterferenceLocation from "./components/TxInterferenceLocation";
+import RxInterferenceLocation from "./components/RxInterferenceLocation";
+import BaselinePoint3Location from "./components/BaselinePoint3Location";
 import UploadPhoto from "./components/UploadPhoto";
-import CameraUpload from "./components/CameraUpload"; // 📷 新增拍照上傳組件
+import CameraUpload from "./components/CameraUpload";
 
 console.log("Origin LAT:", import.meta.env.VITE_ORIGIN_LAT);
-
 
 interface AppProps {
   activeView: "stereogram" | "floor-plan";
@@ -29,7 +31,6 @@ function App({ activeView }: AppProps) {
   const { scenes } = useParams<{ scenes: string }>();
   const currentScene = scenes || "nycu";
   const initialComponent = activeView === "stereogram" ? "3DRT" : "2DRT";
-
 
   const {
     tempDevices,
@@ -74,7 +75,6 @@ function App({ activeView }: AppProps) {
   const [uavAnimation, setUavAnimation] = useState(false);
   const [selectedReceiverIds, setSelectedReceiverIds] = useState<number[]>([]);
 
-  // 從 .env 讀取原點 & scale
   const origin = useMemo(
     () => ({
       lat: Number(import.meta.env.VITE_ORIGIN_LAT),
@@ -92,7 +92,10 @@ function App({ activeView }: AppProps) {
         receiver: 1,
         desired: 2,
         jammer: 3,
-        user: 4, // ✅ user 也加入排序
+        user: 4,
+        "tx-interference": 5,
+        "rx-interference": 6,
+        "baseline-point-3": 7,
       };
       const roleA = roleOrder[a.role] || 99;
       const roleB = roleOrder[b.role] || 99;
@@ -115,13 +118,25 @@ function App({ activeView }: AppProps) {
     cancelDeviceChanges();
   };
 
-  const handleDeleteDevice = async (id: number) => {
-    if (id < 0) {
+  const handleDeleteDevice = async (id: number | string) => {
+    if (
+      id === "tx-interference" || 
+      id === "rx-interference" ||
+      id === "baseline-point-3" ||
+      id === -888 || 
+      id === -999
+    ) {
+      alert("無法刪除干擾源");
+      return;
+    }
+    
+    if (typeof id === 'number' && id < 0) {
       setTempDevices((prev) => prev.filter((device) => device.id !== id));
       setHasTempDevices(true);
       console.log(`已從前端移除臨時設備 ID: ${id}`);
       return;
     }
+    
     const devicesAfterDelete = tempDevices.filter(
       (device) => device.id !== id
     );
@@ -132,12 +147,13 @@ function App({ activeView }: AppProps) {
       return;
     }
     if (!window.confirm("確定要刪除這個設備嗎？")) return;
-    await deleteDeviceById(id);
+    await deleteDeviceById(id as number);
   };
 
   const handleAddDevice = () => {
     addNewDevice();
   };
+  
   const handleDeviceChange = (
     id: number,
     field: string | number | symbol,
@@ -145,21 +161,26 @@ function App({ activeView }: AppProps) {
   ) => {
     updateDeviceField(id, field as keyof Device, value);
   };
+  
   const handleMenuClick = (component: string) => {
     setActiveComponent(component);
   };
+  
   const handleSelectedReceiversChange = useCallback((ids: number[]) => {
     setSelectedReceiverIds(ids);
   }, []);
+  
   const handleSatelliteDataUpdate = useCallback(
     (satellites: VisibleSatelliteInfo[]) => {
       setSkyfieldSatellites(satellites);
     },
     []
   );
+  
   const handleSatelliteCountChange = useCallback((count: number) => {
     setSatelliteDisplayCount(count);
   }, []);
+  
   const handleManualControl = useCallback(
     (
       direction:
@@ -185,6 +206,7 @@ function App({ activeView }: AppProps) {
     },
     [selectedReceiverIds, setManualDirection]
   );
+  
   const handleUAVPositionUpdate = useCallback(
     (pos: [number, number, number], deviceId?: number) => {
       if (deviceId === undefined || !selectedReceiverIds.includes(deviceId))
@@ -194,11 +216,31 @@ function App({ activeView }: AppProps) {
     [selectedReceiverIds, updateDevicePositionFromUAV]
   );
 
-  // 📷 處理照片上傳成功
   const handleUploadSuccess = (filename: string) => {
-    console.log('✅ 照片上傳成功:', filename);
-    // 可以在這裡做其他處理，例如顯示通知
+    console.log("✅ 照片上傳成功:", filename);
   };
+
+  const handleUpsertDevice = useCallback((d: any) => {
+    console.log("📡 更新設備:", d);
+    setTempDevices((prev) => {
+      const i = prev.findIndex((x) => x.id === d.id);
+      if (i !== -1) {
+        const existing = prev[i];
+        if (
+          existing.position_x === d.position_x &&
+          existing.position_y === d.position_y &&
+          existing.position_z === d.position_z
+        ) {
+          return prev;
+        }
+      }
+      if (i === -1) return [...prev, d];
+      const next = prev.slice();
+      next[i] = { ...prev[i], ...d };
+      return next;
+    });
+    setHasTempDevices(true);
+  }, [setTempDevices, setHasTempDevices]);
 
   const renderActiveComponent = useCallback(() => {
     switch (activeComponent) {
@@ -252,38 +294,35 @@ function App({ activeView }: AppProps) {
 
   return (
     <>
-      {/* 📍 掛上 UserLocation，每 10 秒更新一次 */}
+      {/* ✅ 藍色球 - 用戶位置 */}
       <UserLocation
         origin={origin}
         scale={scale}
-        upsertDevice={(d) => {
-          console.log("📡 更新 user device:", d);
-          setTempDevices((prev) => {
-            const i = prev.findIndex((x) => x.id === d.id);
-            // 檢查是否真的有變化
-            if (i !== -1) {
-              const existing = prev[i];
-              if (
-                existing.position_x === d.position_x &&
-                existing.position_y === d.position_y &&
-                existing.position_z === d.position_z
-              ) {
-                return prev; // 沒變化就不更新
-              }
-            }
-            if (i === -1) return [...prev, d];
-            const next = prev.slice();
-            next[i] = { ...prev[i], ...d };
-            return next;
-          });
-          setHasTempDevices(true);
-        }}
+        upsertDevice={handleUpsertDevice}
       />
 
-      {/* 📸 掛上自動上傳元件 */}
-      <UploadPhoto uploadUrl="https://your-backend-api/upload-image" />
+      {/* ✅ 紅色球 - TX 干擾源 */}
+      <TxInterferenceLocation
+        origin={origin}
+        scale={scale}
+        upsertDevice={handleUpsertDevice}
+      />
 
-      {/* 📷 掛上拍照上傳組件 */}
+      {/* ✅ 綠色球 - RX 干擾源 */}
+      <RxInterferenceLocation
+        origin={origin}
+        scale={scale}
+        upsertDevice={handleUpsertDevice}
+      />
+
+      {/* ✅ 黃色球 - 基準點3 */}
+      <BaselinePoint3Location
+        origin={origin}
+        scale={scale}
+        upsertDevice={handleUpsertDevice}
+      />
+
+      <UploadPhoto uploadUrl="https://your-backend-api/upload-image" />
       <CameraUpload onUploadSuccess={handleUploadSuccess} />
 
       <ErrorBoundary>

@@ -1,6 +1,5 @@
-// src/components/MainScene.tsx
-import { useLayoutEffect, useMemo } from 'react'
-import { useGLTF } from '@react-three/drei'
+import { useLayoutEffect, useMemo, useState, useEffect } from 'react'
+import { useGLTF, Html } from '@react-three/drei'
 import { useThree } from '@react-three/fiber'
 import type { OrbitControls as OrbitControlsImpl } from 'three-stdlib'
 import * as THREE from 'three'
@@ -43,6 +42,42 @@ const MainScene: React.FC<MainSceneProps> = ({
   satellites = [],
   sceneName,
 }) => {
+  // ✅ 追蹤滑鼠/觸控是否靜止
+  const [isMouseStill, setIsMouseStill] = useState(true)
+
+  // ✅ 監聽滑鼠和觸控活動（適用於桌面和手機）
+  useEffect(() => {
+    let timer: NodeJS.Timeout
+
+    const handleMouseActivity = () => {
+      setIsMouseStill(false) // 互動時隱藏標籤
+      clearTimeout(timer)
+      timer = setTimeout(() => setIsMouseStill(true), 800) // 800ms 後顯示標籤
+    }
+
+    // 桌面事件
+    window.addEventListener('mousemove', handleMouseActivity)
+    window.addEventListener('wheel', handleMouseActivity)
+    window.addEventListener('mousedown', handleMouseActivity)
+
+    // ✅ 手機觸控事件
+    window.addEventListener('touchstart', handleMouseActivity, { passive: true })
+    window.addEventListener('touchmove', handleMouseActivity, { passive: true })
+    window.addEventListener('touchend', handleMouseActivity)
+
+    return () => {
+      clearTimeout(timer)
+      // 移除桌面事件
+      window.removeEventListener('mousemove', handleMouseActivity)
+      window.removeEventListener('wheel', handleMouseActivity)
+      window.removeEventListener('mousedown', handleMouseActivity)
+      // 移除手機觸控事件
+      window.removeEventListener('touchstart', handleMouseActivity)
+      window.removeEventListener('touchmove', handleMouseActivity)
+      window.removeEventListener('touchend', handleMouseActivity)
+    }
+  }, [])
+
   // 根據場景名稱動態生成 URL
   const backendSceneName = getBackendSceneName(sceneName)
   const SCENE_URL = ApiRoutes.scenes.getSceneModel(backendSceneName)
@@ -140,8 +175,30 @@ const MainScene: React.FC<MainSceneProps> = ({
   // 🎯 渲染各類 device
   const deviceMeshes = useMemo(() => {
     console.log('🎯 MainScene devices:', devices)
+    console.log('🎯 devices 數量:', devices.length)
+    
+    // ✅ 詳細打印每個設備的資訊
+    devices.forEach((d, index) => {
+      console.log(`🎯 設備 ${index}:`, {
+        id: d.id,
+        idType: typeof d.id,
+        role: d.role,
+        roleType: typeof d.role,
+        roleValue: `"${d.role}"`,
+        roleLength: d.role?.length,
+        position: [d.position_x, d.position_y, d.position_z]
+      })
+    })
 
     return devices.map((device: any) => {
+      console.log('🔍 正在處理 device:', { 
+        id: device.id, 
+        role: device.role,
+        roleMatch: device.role === 'tx-interference',
+        roleTrimMatch: String(device.role).trim() === 'tx-interference',
+        position: [device.position_x, device.position_y, device.position_z] 
+      })
+
       const isSelected =
         device.role === 'receiver' &&
         device.id !== null &&
@@ -209,7 +266,7 @@ const MainScene: React.FC<MainSceneProps> = ({
       } else if (device.role === 'user') {
         console.log('🔵 User device:', device)
         return (
-          <mesh
+          <group
             key={device.id ?? `user-${device.position_x}-${device.position_z}`}
             position={[
               device.position_x, // 東
@@ -217,15 +274,209 @@ const MainScene: React.FC<MainSceneProps> = ({
               device.position_z, // 北
             ]}
           >
-            <sphereGeometry args={[20, 32, 32]} />
-            <meshStandardMaterial 
-              color="blue" 
-              emissive={0x0000ff}
-              emissiveIntensity={0.5}
-            />
-          </mesh>
+            {/* 藍色球 */}
+            <mesh>
+              <sphereGeometry args={[10, 32, 32]} />
+              <meshStandardMaterial 
+                color="blue" 
+                emissive={0x0000ff}
+                emissiveIntensity={0.5}
+              />
+            </mesh>
+
+            {/* ✅ 只在靜止時顯示標籤（適用桌面和手機） */}
+            {isMouseStill && (
+              <Html
+                position={[0, 50, 0]}
+                center
+                sprite
+                style={{
+                  background: 'rgba(0, 0, 0, 0.85)',
+                  color: 'white',
+                  padding: '5px 10px',
+                  borderRadius: '5px',
+                  fontSize: '12px',
+                  fontWeight: 'bold',
+                  whiteSpace: 'nowrap',
+                  pointerEvents: 'none',
+                  userSelect: 'none',
+                  border: '2px solid #00bfff',
+                  boxShadow: '0 4px 12px rgba(0, 191, 255, 0.5)',
+                }}
+              >
+                📍 目前手機位置
+              </Html>
+            )}
+          </group>
         )
-      } else {
+      } 
+      // ✅ 渲染 TX 干擾源（紅色球）
+      else if (device.role && String(device.role).trim() === 'tx-interference') {
+        console.log('🔴🔴🔴 找到 TX 干擾源!!!', device)
+        console.log('🔴 TX 干擾源座標:', {
+          x: device.position_x,
+          y: device.position_y,
+          z: device.position_z,
+        })
+        
+        return (
+          <group
+            key={device.id ?? `tx-${device.position_x}-${device.position_z}`}
+            position={[
+              device.position_x,
+              device.position_y,
+              device.position_z,
+            ]}
+          >
+            {/* 紅色球 */}
+            <mesh>
+              <sphereGeometry args={[10, 32, 32]} />
+              <meshStandardMaterial 
+                color="red" 
+                emissive={0xff0000}
+                emissiveIntensity={1.5}
+                opacity={1.0}
+                transparent={false}
+              />
+            </mesh>
+
+            {isMouseStill && (
+              <Html
+                position={[0, 50, 0]}
+                center
+                sprite
+                style={{
+                  background: 'rgba(255, 0, 0, 0.85)',
+                  color: 'black',
+                  padding: '5px 10px',
+                  borderRadius: '5px',
+                  fontSize: '12px',
+                  fontWeight: 'bold',
+                  whiteSpace: 'nowrap',
+                  pointerEvents: 'none',
+                  userSelect: 'none',
+                  border: '2px solid #ff0000',
+                  boxShadow: '0 4px 12px rgba(255, 0, 0, 0.5)',
+                }}
+              >
+                📡 基準點2 繁星樓宿舍
+              </Html>
+            )}
+          </group>
+        )
+      }
+      // ✅ 渲染 RX 干擾源（綠色球）
+      else if (device.role && String(device.role).trim() === 'rx-interference') {
+        console.log('🟢🟢🟢 找到 RX 干擾源!!!', device)
+        console.log('🟢 RX 干擾源座標:', {
+          x: device.position_x,
+          y: device.position_y,
+          z: device.position_z,
+        })
+        
+        return (
+          <group
+            key={device.id ?? `rx-${device.position_x}-${device.position_z}`}
+            position={[
+              device.position_x,
+              device.position_y,
+              device.position_z,
+            ]}
+          >
+            {/* 綠色球 */}
+            <mesh>
+              <sphereGeometry args={[10, 32, 32]} />
+              <meshStandardMaterial 
+                color="green" 
+                emissive={0x00ff00}
+                emissiveIntensity={1.5}
+                opacity={1.0}
+                transparent={false}
+              />
+            </mesh>
+
+            {isMouseStill && (
+              <Html
+                position={[0, 50, 0]}
+                center
+                sprite
+                style={{
+                  background: 'rgba(0, 255, 0, 0.85)',
+                  color: 'black',
+                  padding: '5px 10px',
+                  borderRadius: '5px',
+                  fontSize: '12px',
+                  fontWeight: 'bold',
+                  whiteSpace: 'nowrap',
+                  pointerEvents: 'none',
+                  userSelect: 'none',
+                  border: '2px solid #00ff00',
+                  boxShadow: '0 4px 12px rgba(0, 255, 0, 0.5)',
+                }}
+              >
+                📡 基準點1 電機資訊大樓
+              </Html>
+            )}
+          </group>
+        )
+      }
+      // ✅ 新增：渲染基準點3（黃色球）
+      else if (device.role && String(device.role).trim() === 'baseline-point-3') {
+        console.log('🟡🟡🟡 找到基準點3!!!', device)
+        console.log('🟡 基準點3座標:', {
+          x: device.position_x,
+          y: device.position_y,
+          z: device.position_z,
+        })
+        
+        return (
+          <group
+            key={device.id ?? `baseline-point-3-${device.position_x}-${device.position_z}`}
+            position={[
+              device.position_x,
+              device.position_y,
+              device.position_z,
+            ]}
+          >
+            {/* 黃色球 */}
+            <mesh>
+              <sphereGeometry args={[10, 32, 32]} />
+              <meshStandardMaterial 
+                color="yellow" 
+                emissive={0xffff00}
+                emissiveIntensity={1.5}
+                opacity={1.0}
+                transparent={false}
+              />
+            </mesh>
+
+            {isMouseStill && (
+              <Html
+                position={[0, 50, 0]}
+                center
+                sprite
+                style={{
+                  background: 'rgba(255, 255, 0, 0.85)',
+                  color: 'black',
+                  padding: '5px 10px',
+                  borderRadius: '5px',
+                  fontSize: '12px',
+                  fontWeight: 'bold',
+                  whiteSpace: 'nowrap',
+                  pointerEvents: 'none',
+                  userSelect: 'none',
+                  border: '2px solid #ffff00',
+                  boxShadow: '0 4px 12px rgba(255, 255, 0, 0.5)',
+                }}
+              >
+                📡 基準點3 行政大樓
+              </Html>
+            )}
+          </group>
+        )
+      }
+      else {
+        console.log('⚪ 未知的 device role:', device.role)
         return null
       }
     })
@@ -239,6 +490,7 @@ const MainScene: React.FC<MainSceneProps> = ({
     selectedReceiverIds,
     BS_MODEL_URL,
     JAMMER_MODEL_URL,
+    isMouseStill,
   ])
 
   return (

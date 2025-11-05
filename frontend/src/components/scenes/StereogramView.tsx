@@ -58,6 +58,13 @@ export default function SceneView({
 }: SceneViewProps) {
     const canvasRef = useRef<HTMLCanvasElement>(null)
 
+    // ✅ 添加調試訊息，確認 devices 是否正確傳遞
+    useEffect(() => {
+        console.log('🎥 SceneView 收到的 devices:', devices);
+        console.log('🎥 devices 數量:', devices.length);
+        console.log('🎥 devices 的 roles:', devices.map(d => ({ id: d.id, role: d.role })));
+    }, [devices]);
+
     // WebGL 上下文恢復處理
     const handleWebGLContextLost = useCallback((event: Event) => {
         console.warn('WebGL 上下文丟失，嘗試恢復...')
