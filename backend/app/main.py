@@ -1,11 +1,13 @@
 import logging
-from fastapi import FastAPI, UploadFile, File
+from fastapi import FastAPI, UploadFile, File, WebSocket, WebSocketDisconnect
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.staticfiles import StaticFiles
 from fastapi.responses import JSONResponse
 import os
 from contextlib import asynccontextmanager
 from datetime import datetime
+from typing import List
+import json
 
 # Import lifespan manager and API router from their new locations
 from app.db.lifespan import lifespan
@@ -65,10 +67,71 @@ app.add_middleware(
 )
 logger.info(f"CORS middleware added with origins: {origins}")
 
+# ✅ 新增：GPS WebSocket 連接管理器
+class GPSConnectionManager:
+    def __init__(self):
+        self.active_connections: List[WebSocket] = []
+
+    async def connect(self, websocket: WebSocket):
+        await websocket.accept()
+        self.active_connections.append(websocket)
+        logger.info(f"📡 GPS WebSocket 新客戶端連接，當前連接數: {len(self.active_connections)}")
+
+    def disconnect(self, websocket: WebSocket):
+        if websocket in self.active_connections:
+            self.active_connections.remove(websocket)
+        logger.info(f"📡 GPS WebSocket 客戶端斷開，當前連接數: {len(self.active_connections)}")
+
+    async def broadcast(self, message: str, sender: WebSocket):
+        """廣播給所有客戶端（除了發送者）"""
+        for connection in self.active_connections:
+            if connection != sender:
+                try:
+                    await connection.send_text(message)
+                except Exception as e:
+                    logger.error(f"❌ 廣播失敗: {e}")
+
+gps_manager = GPSConnectionManager()
+
 # --- Test Endpoint (Before API v1 Router) ---
 @app.get("/ping", tags=["Test"])
 async def ping():
     return {"message": "pong"}
+
+# ✅ 新增：GPS WebSocket 端點
+@app.websocket("/ws/gps")
+async def websocket_gps_endpoint(websocket: WebSocket):
+    await gps_manager.connect(websocket)
+    
+    try:
+        while True:
+            # 接收客戶端發送的 GPS 資料
+            data = await websocket.receive_text()
+            gps_data = json.loads(data)
+            
+            logger.info(
+                f"📍 收到 GPS: lat={gps_data.get('lat')}, "
+                f"lon={gps_data.get('lon')}, "
+                f"device={gps_data.get('deviceType')}"
+            )
+            
+            # 廣播給其他所有客戶端
+            await gps_manager.broadcast(data, websocket)
+            
+    except WebSocketDisconnect:
+        gps_manager.disconnect(websocket)
+        logger.info("✅ GPS WebSocket 客戶端正常斷開連接")
+    except Exception as e:
+        logger.error(f"❌ GPS WebSocket 錯誤: {e}")
+        gps_manager.disconnect(websocket)
+
+# ✅ 新增：GPS 健康檢查端點（可選，用於測試）
+@app.get("/api/gps/health", tags=["GPS"])
+async def gps_health_check():
+    return {
+        "status": "ok",
+        "websocket_connections": len(gps_manager.active_connections)
+    }
 
 # 📷 照片上傳 API
 @app.post("/api/upload-photo", tags=["Photo Upload"])

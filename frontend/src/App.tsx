@@ -1,6 +1,6 @@
 console.log("🔥 App component render 了");
 
-import { useState, useCallback, useMemo } from "react";
+import { useState, useCallback, useMemo, useEffect } from "react";
 import { useParams } from "react-router-dom";
 import SceneView from "./components/scenes/StereogramView";
 import Layout from "./components/layout/Layout";
@@ -31,6 +31,9 @@ function App({ activeView }: AppProps) {
   const { scenes } = useParams<{ scenes: string }>();
   const currentScene = scenes || "nycu";
   const initialComponent = activeView === "stereogram" ? "3DRT" : "2DRT";
+
+  // ✅ 新增：場景準備狀態
+  const [isSceneReady, setIsSceneReady] = useState(false);
 
   const {
     tempDevices,
@@ -85,6 +88,19 @@ function App({ activeView }: AppProps) {
   );
   console.log("App origin:", origin);
   const scale = Number(import.meta.env.VITE_SCENE_SCALE ?? 1);
+
+  // ✅ 新增：等待場景準備好
+  useEffect(() => {
+    console.log("⏳ 開始載入場景，等待 3 秒...")
+    
+    // 延遲 3 秒確保場景完全載入（行動網路需要更多時間）
+    const timer = setTimeout(() => {
+      console.log("✅ 場景已準備好，開始渲染基準點")
+      setIsSceneReady(true)
+    }, 3000) // 3 秒延遲
+
+    return () => clearTimeout(timer)
+  }, [])
 
   const sortedDevicesForSidebar = useMemo(() => {
     return [...tempDevices].sort((a, b) => {
@@ -294,33 +310,64 @@ function App({ activeView }: AppProps) {
 
   return (
     <>
-      {/* ✅ 藍色球 - 用戶位置 */}
-      <UserLocation
-        origin={origin}
-        scale={scale}
-        upsertDevice={handleUpsertDevice}
-      />
+      {/* ✅ 只有場景準備好後才渲染基準點組件 */}
+      {isSceneReady ? (
+        <>
+          {/* ✅ 藍色球 - 用戶位置 */}
+          <UserLocation
+            origin={origin}
+            scale={scale}
+            upsertDevice={handleUpsertDevice}
+          />
 
-      {/* ✅ 紅色球 - TX 干擾源 */}
-      <TxInterferenceLocation
-        origin={origin}
-        scale={scale}
-        upsertDevice={handleUpsertDevice}
-      />
+          {/* ✅ 紅色球 - TX 干擾源 */}
+          <TxInterferenceLocation
+            origin={origin}
+            scale={scale}
+            upsertDevice={handleUpsertDevice}
+          />
 
-      {/* ✅ 綠色球 - RX 干擾源 */}
-      <RxInterferenceLocation
-        origin={origin}
-        scale={scale}
-        upsertDevice={handleUpsertDevice}
-      />
+          {/* ✅ 綠色球 - RX 干擾源 */}
+          <RxInterferenceLocation
+            origin={origin}
+            scale={scale}
+            upsertDevice={handleUpsertDevice}
+          />
 
-      {/* ✅ 黃色球 - 基準點3 */}
-      <BaselinePoint3Location
-        origin={origin}
-        scale={scale}
-        upsertDevice={handleUpsertDevice}
-      />
+          {/* ✅ 黃色球 - 基準點3 */}
+          <BaselinePoint3Location
+            origin={origin}
+            scale={scale}
+            upsertDevice={handleUpsertDevice}
+          />
+        </>
+      ) : (
+        // ✅ 顯示載入提示
+        <div style={{
+          position: 'fixed',
+          top: '50%',
+          left: '50%',
+          transform: 'translate(-50%, -50%)',
+          background: 'rgba(0, 0, 0, 0.9)',
+          color: 'white',
+          padding: '30px 40px',
+          borderRadius: '15px',
+          fontSize: '18px',
+          textAlign: 'center',
+          zIndex: 9999,
+          boxShadow: '0 4px 20px rgba(0,0,0,0.5)',
+          border: '2px solid #00ff00',
+        }}>
+          <div style={{ marginBottom: '15px', fontSize: '24px' }}>⏳</div>
+          <div style={{ fontWeight: 'bold' }}>正在載入 3D 場景...</div>
+          <div style={{ fontSize: '14px', marginTop: '10px', color: '#aaa' }}>
+            行動網路可能需要較長時間
+          </div>
+          <div style={{ fontSize: '12px', marginTop: '5px', color: '#666' }}>
+            請稍候 3 秒
+          </div>
+        </div>
+      )}
 
       <UploadPhoto uploadUrl="https://your-backend-api/upload-image" />
       <CameraUpload onUploadSuccess={handleUploadSuccess} />
