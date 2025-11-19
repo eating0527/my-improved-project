@@ -1,4 +1,4 @@
-import { useLayoutEffect, useMemo, useState, useEffect } from 'react'
+import { useLayoutEffect, useMemo, useState, useEffect, Suspense } from 'react'
 import { useGLTF, Html } from '@react-three/drei'
 import { useThree } from '@react-three/fiber'
 import type { OrbitControls as OrbitControlsImpl } from 'three-stdlib'
@@ -13,6 +13,9 @@ import {
   getBackendSceneName,
   getSceneTextureName,
 } from '../../utils/sceneUtils'
+import UAVPath from '../UAVPath'
+import PhotoMarker from '../PhotoMarker'
+import { latLonToENU } from '../../utils/geo'  // ✅ 加入這行
 
 export interface MainSceneProps {
   devices: any[]
@@ -27,6 +30,17 @@ export interface MainSceneProps {
   selectedReceiverIds?: number[]
   satellites?: VisibleSatelliteInfo[]
   sceneName: string
+  uavPath?: Array<{ x: number; y: number; z: number }>
+  uavPosition?: [number, number, number]
+  photos?: Array<{
+    url: string
+    timestamp: string
+    latitude?: number | null
+    longitude?: number | null
+    altitude?: number | null
+  }>
+  origin?: { lat: number; lon: number; alt: number }  // ✅ 加入 alt
+  scale?: number
 }
 
 const UAV_SCALE = 10
@@ -41,44 +55,41 @@ const MainScene: React.FC<MainSceneProps> = ({
   selectedReceiverIds = [],
   satellites = [],
   sceneName,
+  uavPath = [],
+  uavPosition = [0, 10, 0],
+  photos = [],
+  origin,
+  scale,
 }) => {
-  // ✅ 追蹤滑鼠/觸控是否靜止
   const [isMouseStill, setIsMouseStill] = useState(true)
 
-  // ✅ 監聽滑鼠和觸控活動（適用於桌面和手機）
   useEffect(() => {
     let timer: NodeJS.Timeout
 
     const handleMouseActivity = () => {
-      setIsMouseStill(false) // 互動時隱藏標籤
+      setIsMouseStill(false)
       clearTimeout(timer)
-      timer = setTimeout(() => setIsMouseStill(true), 800) // 800ms 後顯示標籤
+      timer = setTimeout(() => setIsMouseStill(true), 800)
     }
 
-    // 桌面事件
     window.addEventListener('mousemove', handleMouseActivity)
     window.addEventListener('wheel', handleMouseActivity)
     window.addEventListener('mousedown', handleMouseActivity)
-
-    // ✅ 手機觸控事件
     window.addEventListener('touchstart', handleMouseActivity, { passive: true })
     window.addEventListener('touchmove', handleMouseActivity, { passive: true })
     window.addEventListener('touchend', handleMouseActivity)
 
     return () => {
       clearTimeout(timer)
-      // 移除桌面事件
       window.removeEventListener('mousemove', handleMouseActivity)
       window.removeEventListener('wheel', handleMouseActivity)
       window.removeEventListener('mousedown', handleMouseActivity)
-      // 移除手機觸控事件
       window.removeEventListener('touchstart', handleMouseActivity)
       window.removeEventListener('touchmove', handleMouseActivity)
       window.removeEventListener('touchend', handleMouseActivity)
     }
   }, [])
 
-  // 根據場景名稱動態生成 URL
   const backendSceneName = getBackendSceneName(sceneName)
   const SCENE_URL = ApiRoutes.scenes.getSceneModel(backendSceneName)
   const BS_MODEL_URL = ApiRoutes.simulations.getModel('tower')
@@ -88,14 +99,12 @@ const MainScene: React.FC<MainSceneProps> = ({
     getSceneTextureName(sceneName)
   )
 
-  // 預加載模型
   useMemo(() => {
     useGLTF.preload(SCENE_URL)
     useGLTF.preload(BS_MODEL_URL)
     useGLTF.preload(JAMMER_MODEL_URL)
   }, [SCENE_URL, BS_MODEL_URL, JAMMER_MODEL_URL])
 
-  // 載入主場景
   const { scene: mainScene } = useGLTF(SCENE_URL) as any
   const { controls } = useThree()
 
@@ -172,12 +181,39 @@ const MainScene: React.FC<MainSceneProps> = ({
     return root
   }, [mainScene, SATELLITE_TEXTURE_URL])
 
-  // 🎯 渲染各類 device
+  useEffect(() => {
+    if (uavPath && uavPath.length > 0) {
+      console.log('📍 MainScene 收到軌跡資料，點數:', uavPath.length)
+    }
+  }, [uavPath])
+
+  useEffect(() => {
+    console.log('🚁 MainScene 收到 UAV 位置:', uavPosition)
+    console.log('🚁 UAV 位置詳細:', {
+      x: uavPosition[0],
+      y: uavPosition[1],
+      z: uavPosition[2],
+    })
+    
+    if (uavPosition[1] < 5) {
+      console.warn('⚠️ UAV 的 Y 座標太低，可能看不到！', uavPosition[1])
+    }
+  }, [uavPosition])
+
+  // ✅ 監聽照片資料
+  useEffect(() => {
+    if (photos.length > 0) {
+      console.log('📸 MainScene 收到照片資料，數量:', photos.length)
+      console.log('📸 照片詳細資訊:', photos)
+      console.log('📸 origin:', origin)
+      console.log('📸 scale:', scale)
+    }
+  }, [photos, origin, scale])
+
   const deviceMeshes = useMemo(() => {
     console.log('🎯 MainScene devices:', devices)
     console.log('🎯 devices 數量:', devices.length)
     
-    // ✅ 詳細打印每個設備的資訊
     devices.forEach((d, index) => {
       console.log(`🎯 設備 ${index}:`, {
         id: d.id,
@@ -204,12 +240,11 @@ const MainScene: React.FC<MainSceneProps> = ({
         device.id !== null &&
         selectedReceiverIds.includes(device.id)
 
-      // ✅ 三軸統一： [X=東, Y=高度, Z=北]
       if (device.role === 'receiver') {
         const position: [number, number, number] = [
-          device.position_x, // 東
-          device.position_y, // 高度
-          device.position_z, // 北
+          device.position_x,
+          device.position_y,
+          device.position_z,
         ]
         const shouldControl = isSelected
 
@@ -264,53 +299,9 @@ const MainScene: React.FC<MainSceneProps> = ({
           />
         )
       } else if (device.role === 'user') {
-        console.log('🔵 User device:', device)
-        return (
-          <group
-            key={device.id ?? `user-${device.position_x}-${device.position_z}`}
-            position={[
-              device.position_x, // 東
-              device.position_y, // 高度
-              device.position_z, // 北
-            ]}
-          >
-            {/* 藍色球 */}
-            <mesh>
-              <sphereGeometry args={[10, 32, 32]} />
-              <meshStandardMaterial 
-                color="blue" 
-                emissive={0x0000ff}
-                emissiveIntensity={0.5}
-              />
-            </mesh>
-
-            {/* ✅ 只在靜止時顯示標籤（適用桌面和手機） */}
-            {isMouseStill && (
-              <Html
-                position={[0, 50, 0]}
-                center
-                sprite
-                style={{
-                  background: 'rgba(0, 0, 0, 0.85)',
-                  color: 'white',
-                  padding: '5px 10px',
-                  borderRadius: '5px',
-                  fontSize: '12px',
-                  fontWeight: 'bold',
-                  whiteSpace: 'nowrap',
-                  pointerEvents: 'none',
-                  userSelect: 'none',
-                  border: '2px solid #00bfff',
-                  boxShadow: '0 4px 12px rgba(0, 191, 255, 0.5)',
-                }}
-              >
-                📍 目前手機位置
-              </Html>
-            )}
-          </group>
-        )
+        console.log('🔵 User device 已被 UAVFlight 替代，不再渲染藍色球')
+        return null
       } 
-      // ✅ 渲染 TX 干擾源（紅色球）
       else if (device.role && String(device.role).trim() === 'tx-interference') {
         console.log('🔴🔴🔴 找到 TX 干擾源!!!', device)
         console.log('🔴 TX 干擾源座標:', {
@@ -328,7 +319,6 @@ const MainScene: React.FC<MainSceneProps> = ({
               device.position_z,
             ]}
           >
-            {/* 紅色球 */}
             <mesh>
               <sphereGeometry args={[10, 32, 32]} />
               <meshStandardMaterial 
@@ -365,7 +355,6 @@ const MainScene: React.FC<MainSceneProps> = ({
           </group>
         )
       }
-      // ✅ 渲染 RX 干擾源（綠色球）
       else if (device.role && String(device.role).trim() === 'rx-interference') {
         console.log('🟢🟢🟢 找到 RX 干擾源!!!', device)
         console.log('🟢 RX 干擾源座標:', {
@@ -383,7 +372,6 @@ const MainScene: React.FC<MainSceneProps> = ({
               device.position_z,
             ]}
           >
-            {/* 綠色球 */}
             <mesh>
               <sphereGeometry args={[10, 32, 32]} />
               <meshStandardMaterial 
@@ -420,7 +408,6 @@ const MainScene: React.FC<MainSceneProps> = ({
           </group>
         )
       }
-      // ✅ 新增：渲染基準點3（黃色球）
       else if (device.role && String(device.role).trim() === 'baseline-point-3') {
         console.log('🟡🟡🟡 找到基準點3!!!', device)
         console.log('🟡 基準點3座標:', {
@@ -438,7 +425,6 @@ const MainScene: React.FC<MainSceneProps> = ({
               device.position_z,
             ]}
           >
-            {/* 黃色球 */}
             <mesh>
               <sphereGeometry args={[10, 32, 32]} />
               <meshStandardMaterial 
@@ -498,6 +484,109 @@ const MainScene: React.FC<MainSceneProps> = ({
       <primitive object={prepared} castShadow receiveShadow />
       {deviceMeshes}
       <SatelliteManager satellites={satellites} />
+      
+      {/* ✅ 渲染 UAV 軌跡 */}
+      {uavPath && uavPath.length > 1 && (
+        <UAVPath 
+          path={uavPath} 
+          color="#00ff00" 
+          lineWidth={3} 
+        />
+      )}
+
+      {/* ✅ 渲染照片標記（使用 latLonToENU 正確轉換） */}
+      {origin && scale && photos.length > 0 && (
+        <>
+          {console.log('📸 開始渲染 PhotoMarker，照片數量:', photos.length)}
+          {photos.map((photo, index) => {
+            console.log(`📸 處理照片 ${index}:`, photo);
+            
+            if (!photo.latitude || !photo.longitude) {
+              console.warn(`⚠️ 照片 ${index} 缺少 GPS 資料:`, photo);
+              return null;
+            }
+
+            // ✅ 使用 latLonToENU 轉換（和 UserLocation 一樣）
+            const [east, north, up] = latLonToENU(
+              photo.latitude,
+              photo.longitude,
+              photo.altitude ?? 0,
+              origin,
+              0  // rotation
+            )
+
+            // ✅ 轉換成場景座標
+            const x = east * scale
+            const z = north * scale
+            const y = Math.max(up * scale, 10)  // 最少 10 單位高度
+
+            console.log(`📸 照片 ${index} 的 3D 座標:`, {
+              原始GPS: { 
+                lat: photo.latitude, 
+                lon: photo.longitude, 
+                alt: photo.altitude 
+              },
+              origin: origin,
+              ENU: { east, north, up },
+              scale: scale,
+              最終座標: { x, y, z }
+            });
+
+            return (
+              <PhotoMarker
+                key={`photo-${index}`}
+                position={[x, y, z]}
+                photoUrl={photo.url}
+                timestamp={photo.timestamp}
+                onClick={() => {
+                  console.log('📸 點擊照片:', photo.url)
+                }}
+              />
+            );
+          })}
+        </>
+      )}
+
+      {/* ✅ 渲染 UAV 模型（包在 Suspense 裡） + 位置標示 */}
+      {console.log('🎯 準備渲染 UAV，位置:', uavPosition)}
+      <Suspense fallback={null}>
+        <group position={uavPosition}>
+          {/* UAV 模型 */}
+          <UAVFlight
+            position={[0, 0, 0]}
+            scale={[10, 10, 10]}
+            auto={false}
+            uavAnimation={true}
+            onPositionUpdate={(pos) => {
+              console.log('🚁 UAV 位置回調:', pos)
+            }}
+          />
+
+          {/* ✅ UAV 位置標示（當滑鼠靜止時顯示） */}
+          {isMouseStill && (
+            <Html
+              position={[0, 30, 0]}
+              center
+              sprite
+              style={{
+                background: 'rgba(0, 191, 255, 0.9)',
+                color: 'white',
+                padding: '5px 10px',
+                borderRadius: '5px',
+                fontSize: '12px',
+                fontWeight: 'bold',
+                whiteSpace: 'nowrap',
+                pointerEvents: 'none',
+                userSelect: 'none',
+                border: '2px solid #00BFFF',
+                boxShadow: '0 4px 12px rgba(0, 191, 255, 0.6)',
+              }}
+            >
+              🚁 UAV 目前位置
+            </Html>
+          )}
+        </group>
+      </Suspense>
     </>
   )
 }

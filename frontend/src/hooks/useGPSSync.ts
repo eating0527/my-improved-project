@@ -5,22 +5,59 @@ interface GPSData {
   lat: number
   lon: number
   alt: number
-  accuracy: number  // ✅ 新增：精度
+  accuracy: number
   timestamp: number
   deviceType: 'mobile' | 'desktop'
 }
 
-// ✅ 修改：localGPS 加入 accuracy
-export function useGPSSync(localGPS: { lat: number; lon: number; alt: number; accuracy: number }) {
+// ✅ 清除軌跡訊息類型
+interface ClearPathMessage {
+  type: 'clear-path'
+  timestamp: number
+  deviceType: 'mobile' | 'desktop'
+}
+
+// ✅ 照片上傳事件類型
+interface PhotoUploadEvent {
+  type: 'photo-upload'
+  filename: string
+  url: string
+  timestamp: string
+}
+
+// ✅ 新增：照片刪除事件類型
+interface PhotoDeleteEvent {
+  type: 'photo_deleted'
+  filename: string
+  timestamp: string
+}
+
+// ✅ 修改：返回值類型（新增照片刪除事件）
+interface GPSSyncResult {
+  lat: number
+  lon: number
+  alt: number
+  accuracy: number
+  clearPathTrigger: number
+  sendClearPath: () => void
+  photoUploadEvent: PhotoUploadEvent | null
+  photoDeleteEvent: PhotoDeleteEvent | null  // ✅ 新增：照片刪除事件
+}
+
+export function useGPSSync(localGPS: { lat: number; lon: number; alt: number; accuracy: number }): GPSSyncResult {
   const [syncedGPS, setSyncedGPS] = useState({
     ...localGPS,
-    accuracy: 999  // ✅ 預設精度
+    accuracy: 999
   })
   
-  // 檢測是否為手機
+  const [clearPathTrigger, setClearPathTrigger] = useState<number>(0)
+  const [photoUploadEvent, setPhotoUploadEvent] = useState<PhotoUploadEvent | null>(null)
+  
+  // ✅ 新增：照片刪除事件狀態
+  const [photoDeleteEvent, setPhotoDeleteEvent] = useState<PhotoDeleteEvent | null>(null)
+  
   const isMobile = /iPhone|iPad|iPod|Android/i.test(navigator.userAgent)
 
-  // 使用現有的 useWebSocket Hook
   const { isConnected, sendMessage, connectionStatus } = useWebSocket({
     url: 'wss://backend.simworld.website/ws/gps',
     reconnectInterval: 3000,
@@ -31,11 +68,10 @@ export function useGPSSync(localGPS: { lat: number; lon: number; alt: number; ac
       console.log('✅ GPS WebSocket 連接成功')
       console.log(`📱 設備類型: ${isMobile ? '手機' : '筆電'}`)
       
-      // 連接成功後，如果是手機且有有效的 GPS，立即發送
       if (isMobile && localGPS.lat !== 0 && localGPS.lon !== 0) {
         const data: GPSData = {
           ...localGPS,
-          accuracy: localGPS.accuracy,  // ✅ 加入精度
+          accuracy: localGPS.accuracy,
           timestamp: Date.now(),
           deviceType: 'mobile'
         }
@@ -46,11 +82,62 @@ export function useGPSSync(localGPS: { lat: number; lon: number; alt: number; ac
     
     onMessage: (event) => {
       try {
-        // ✅ 修正：event.data 已經是解析後的物件（由 useWebSocket 處理）
-        const data: GPSData = event.data
-        console.log('📥 收到遠端 GPS 原始資料:', data)
+        const data = event.data
+        console.log('📥 收到遠端訊息原始資料:', data)
         
-        // ✅ 新增：驗證資料格式
+        // ✅ 新增：處理照片刪除事件
+        if (data && data.type === 'photo_deleted') {
+          console.log('🗑️ 收到照片刪除事件:', {
+            filename: data.filename,
+            timestamp: data.timestamp
+          })
+          
+          setPhotoDeleteEvent({
+            type: 'photo_deleted',
+            filename: data.filename,
+            timestamp: data.timestamp
+          })
+          
+          console.log('✅ 照片刪除事件已更新狀態')
+          return
+        }
+        
+        // ✅ 處理照片上傳事件
+        if (data && data.type === 'photo-upload') {
+          console.log('📸 收到照片上傳事件:', {
+            filename: data.filename,
+            url: data.url,
+            timestamp: data.timestamp
+          })
+          
+          setPhotoUploadEvent({
+            type: 'photo-upload',
+            filename: data.filename,
+            url: data.url,
+            timestamp: data.timestamp
+          })
+          
+          console.log('✅ 照片上傳事件已更新狀態')
+          return
+        }
+        
+        // ✅ 處理清除軌跡訊息
+        if (data && data.type === 'clear-path') {
+          console.log('🗑️ 收到清除軌跡指令:', {
+            from: data.deviceType,
+            to: isMobile ? '手機' : '筆電',
+            timestamp: new Date(data.timestamp).toLocaleTimeString()
+          })
+          
+          setClearPathTrigger(prev => {
+            const newValue = prev + 1
+            console.log(`🗑️ 清除軌跡觸發器更新: ${prev} -> ${newValue}`)
+            return newValue
+          })
+          return
+        }
+        
+        // ✅ 驗證 GPS 資料格式
         if (!data || typeof data !== 'object') {
           console.error('❌ 收到的資料格式不正確:', data)
           return
@@ -65,25 +152,24 @@ export function useGPSSync(localGPS: { lat: number; lon: number; alt: number; ac
           lat: data.lat,
           lon: data.lon,
           alt: data.alt,
-          accuracy: data.accuracy,  // ✅ 加入精度日誌
+          accuracy: data.accuracy,
           deviceType: data.deviceType,
           isMobile: isMobile
         })
         
-        // 如果是筆電，接收手機的 GPS
         if (!isMobile && data.deviceType === 'mobile') {
           console.log('💻 [筆電] 準備更新 GPS...')
           setSyncedGPS({
             lat: data.lat,
             lon: data.lon,
             alt: data.alt,
-            accuracy: data.accuracy ?? 999  // ✅ 同步精度
+            accuracy: data.accuracy ?? 999
           })
           console.log('💻 [筆電] 已更新手機 GPS:', {
             lat: data.lat.toFixed(6),
             lon: data.lon.toFixed(6),
             alt: data.alt.toFixed(2),
-            accuracy: `${(data.accuracy ?? 999).toFixed(2)}m`  // ✅ 加入精度日誌
+            accuracy: `${(data.accuracy ?? 999).toFixed(2)}m`
           })
         } else if (isMobile && data.deviceType === 'mobile') {
           console.log('📱 [手機] 收到自己發送的 GPS，忽略')
@@ -91,7 +177,7 @@ export function useGPSSync(localGPS: { lat: number; lon: number; alt: number; ac
           console.log('ℹ️ 其他情況，裝置類型:', isMobile ? '手機' : '筆電', '資料類型:', data.deviceType)
         }
       } catch (error) {
-        console.error('❌ 解析 GPS 資料失敗:', error, '原始資料:', event)
+        console.error('❌ 解析訊息失敗:', error, '原始資料:', event)
       }
     },
     
@@ -104,7 +190,6 @@ export function useGPSSync(localGPS: { lat: number; lon: number; alt: number; ac
     }
   })
 
-  // 當本地 GPS 更新時，如果是手機則發送
   useEffect(() => {
     console.log('🔍 檢查是否需要發送 GPS:', {
       isMobile,
@@ -112,7 +197,7 @@ export function useGPSSync(localGPS: { lat: number; lon: number; alt: number; ac
       hasGPS: localGPS.lat !== 0 && localGPS.lon !== 0,
       lat: localGPS.lat,
       lon: localGPS.lon,
-      accuracy: localGPS.accuracy  // ✅ 加入精度日誌
+      accuracy: localGPS.accuracy
     })
 
     if (!isMobile) {
@@ -132,44 +217,72 @@ export function useGPSSync(localGPS: { lat: number; lon: number; alt: number; ac
 
     const data: GPSData = {
       ...localGPS,
-      accuracy: localGPS.accuracy,  // ✅ 加入精度
+      accuracy: localGPS.accuracy,
       timestamp: Date.now(),
       deviceType: 'mobile'
     }
     
     console.log('📤 [手機] 準備發送 GPS:', data)
     sendMessage(data)
-    console.log('📤 [手機] GPS 已發送 (精度: ' + data.accuracy.toFixed(2) + 'm)')  // ✅ 加入精度日誌
-  }, [localGPS.lat, localGPS.lon, localGPS.alt, localGPS.accuracy, isMobile, isConnected, sendMessage])  // ✅ 加入 accuracy 依賴
+    console.log('📤 [手機] GPS 已發送 (精度: ' + data.accuracy.toFixed(2) + 'm)')
+  }, [localGPS.lat, localGPS.lon, localGPS.alt, localGPS.accuracy, isMobile, isConnected, sendMessage])
 
-  // 顯示連接狀態
   useEffect(() => {
     console.log(`🔌 GPS WebSocket 狀態: ${connectionStatus}`)
   }, [connectionStatus])
 
-  // ✅ 新增：監控 syncedGPS 的變化
   useEffect(() => {
     console.log('🔄 syncedGPS 已更新:', {
       lat: syncedGPS.lat,
       lon: syncedGPS.lon,
       alt: syncedGPS.alt,
-      accuracy: syncedGPS.accuracy,  // ✅ 加入精度日誌
+      accuracy: syncedGPS.accuracy,
       isMobile
     })
   }, [syncedGPS, isMobile])
 
-  // 手機使用本地 GPS，筆電使用同步的 GPS
-  const result = isMobile ? localGPS : syncedGPS
+  const sendClearPath = () => {
+    if (!isConnected) {
+      console.warn('⚠️ WebSocket 未連接，無法發送清除軌跡指令')
+      return
+    }
+
+    const message: ClearPathMessage = {
+      type: 'clear-path',
+      timestamp: Date.now(),
+      deviceType: isMobile ? 'mobile' : 'desktop'
+    }
+
+    console.log('📤 發送清除軌跡指令:', {
+      from: isMobile ? '手機' : '筆電',
+      timestamp: new Date(message.timestamp).toLocaleTimeString()
+    })
+
+    sendMessage(message)
+    console.log('✅ 清除軌跡指令已發送')
+  }
+
+  const gpsData = isMobile ? localGPS : syncedGPS
   
   console.log('📍 useGPSSync 返回:', {
     isMobile,
-    result: {
-      lat: result.lat,
-      lon: result.lon,
-      alt: result.alt,
-      accuracy: result.accuracy  // ✅ 加入精度日誌
-    }
+    gps: {
+      lat: gpsData.lat,
+      lon: gpsData.lon,
+      alt: gpsData.alt,
+      accuracy: gpsData.accuracy
+    },
+    clearPathTrigger,
+    photoUploadEvent: photoUploadEvent ? '有照片事件' : '無照片事件',
+    photoDeleteEvent: photoDeleteEvent ? '有刪除事件' : '無刪除事件'  // ✅ 新增日誌
   })
   
-  return result
+  // ✅ 修改：返回 GPS 資料 + 清除軌跡功能 + 照片上傳事件 + 照片刪除事件
+  return {
+    ...gpsData,
+    clearPathTrigger,
+    sendClearPath,
+    photoUploadEvent,
+    photoDeleteEvent  // ✅ 新增：返回照片刪除事件
+  }
 }

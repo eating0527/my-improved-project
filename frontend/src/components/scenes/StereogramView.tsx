@@ -1,4 +1,4 @@
-import { Suspense, useRef, useCallback, useEffect } from 'react'
+import { Suspense, useRef, useCallback, useEffect, useState } from 'react'
 import { Canvas } from '@react-three/fiber'
 import { ContactShadows, OrbitControls } from '@react-three/drei'
 import * as THREE from 'three'
@@ -42,7 +42,18 @@ interface SceneViewProps {
     uavAnimation: boolean
     selectedReceiverIds?: number[]
     satellites?: VisibleSatelliteInfo[]
-    sceneName: string // 新增場景名稱參數
+    sceneName: string
+    uavPath?: Array<{ x: number; y: number; z: number }>
+    uavPosition?: [number, number, number]
+    photos?: Array<{
+        url: string
+        timestamp: string
+        latitude?: number | null
+        longitude?: number | null
+        altitude?: number | null
+    }>
+    origin?: { lat: number; lon: number; alt: number }
+    scale?: number
 }
 
 export default function SceneView({
@@ -55,8 +66,21 @@ export default function SceneView({
     selectedReceiverIds = [],
     satellites = [],
     sceneName,
+    uavPath = [],
+    uavPosition = [0, 10, 0],
+    photos: initialPhotos = [],
+    origin,
+    scale,
 }: SceneViewProps) {
     const canvasRef = useRef<HTMLCanvasElement>(null)
+    
+    // ✅ 使用 state 來管理照片列表，這樣可以動態更新
+    const [photos, setPhotos] = useState(initialPhotos)
+    
+    // ✅ 當 props 中的 photos 改變時，更新 state
+    useEffect(() => {
+        setPhotos(initialPhotos)
+    }, [initialPhotos])
 
     // ✅ 添加調試訊息，確認 devices 是否正確傳遞
     useEffect(() => {
@@ -64,6 +88,123 @@ export default function SceneView({
         console.log('🎥 devices 數量:', devices.length);
         console.log('🎥 devices 的 roles:', devices.map(d => ({ id: d.id, role: d.role })));
     }, [devices]);
+
+    // ✅ 監聽軌跡資料
+    useEffect(() => {
+        if (uavPath.length > 0) {
+            console.log('🎥 SceneView 收到軌跡資料，點數:', uavPath.length);
+        }
+    }, [uavPath]);
+
+    // ✅ 監聽 UAV 位置變化
+    useEffect(() => {
+        console.log('🎥 SceneView 收到 UAV 位置:', uavPosition);
+    }, [uavPosition]);
+
+    // ✅ 監聽照片資料
+    useEffect(() => {
+        if (photos.length > 0) {
+            console.log('🎥 SceneView 收到照片資料，數量:', photos.length);
+            console.log('🎥 照片內容:', photos);
+        }
+    }, [photos]);
+
+    // ✅ 監聽 origin 和 scale
+    useEffect(() => {
+        console.log('🎥 SceneView origin:', origin);
+        console.log('🎥 SceneView scale:', scale);
+    }, [origin, scale]);
+
+    // ✅ 新增：WebSocket 監聽，處理照片上傳和刪除事件
+    useEffect(() => {
+        let ws: WebSocket | null = null
+        
+        const connectWebSocket = () => {
+            try {
+                ws = new WebSocket('wss://backend.simworld.website/ws/gps')
+                
+                ws.onopen = () => {
+                    console.log('✅ StereogramView WebSocket 連線成功')
+                }
+                
+                ws.onmessage = (event) => {
+                    try {
+                        const data = JSON.parse(event.data)
+                        console.log('📩 StereogramView 收到 WebSocket 訊息:', data)
+                        
+                        // ✅ 處理照片上傳事件
+                        if (data.type === 'photo-upload') {
+                            console.log('📸 StereogramView 收到照片上傳事件:', data)
+                            
+                            const newPhoto = {
+                                url: data.url,
+                                timestamp: data.timestamp,
+                                latitude: data.latitude,
+                                longitude: data.longitude,
+                                altitude: data.altitude
+                            }
+                            
+                            // ✅ 檢查照片是否已存在（避免重複）
+                            setPhotos(prevPhotos => {
+                                const exists = prevPhotos.some(p => p.url === newPhoto.url)
+                                if (exists) {
+                                    console.log('⚠️ 照片已存在，不重複新增:', newPhoto.url)
+                                    return prevPhotos
+                                }
+                                
+                                console.log('✅ 添加新照片到場景:', newPhoto)
+                                return [newPhoto, ...prevPhotos]
+                            })
+                        }
+                        
+                        // ✅ 處理照片刪除事件
+                        if (data.type === 'photo_deleted') {
+                            console.log('🗑️ StereogramView 收到照片刪除事件:', data)
+                            
+                            // ✅ 從照片列表中移除
+                            setPhotos(prevPhotos => {
+                                const newPhotos = prevPhotos.filter(photo => 
+                                    !photo.url.includes(data.filename)
+                                )
+                                console.log(`✅ 已從場景移除照片: ${data.filename}，剩餘 ${newPhotos.length} 張`)
+                                return newPhotos
+                            })
+                        }
+                        
+                    } catch (error) {
+                        console.error('❌ StereogramView 解析 WebSocket 訊息失敗:', error)
+                    }
+                }
+                
+                ws.onerror = (error) => {
+                    console.error('❌ StereogramView WebSocket 錯誤:', error)
+                }
+                
+                ws.onclose = () => {
+                    console.log('🔌 StereogramView WebSocket 連線關閉')
+                    // ✅ 嘗試重新連線
+                    setTimeout(() => {
+                        console.log('🔄 嘗試重新連線 WebSocket...')
+                        connectWebSocket()
+                    }, 3000)
+                }
+                
+            } catch (error) {
+                console.error('❌ StereogramView WebSocket 連線失敗:', error)
+            }
+        }
+        
+        // ✅ 啟動 WebSocket 連線
+        connectWebSocket()
+        
+        // ✅ 清理函數：組件卸載時關閉 WebSocket
+        return () => {
+            if (ws) {
+                console.log('🔌 關閉 StereogramView WebSocket 連線')
+                ws.close()
+            }
+        }
+    }, []) // ✅ 空依賴陣列，只在組件掛載時執行一次
 
     // WebGL 上下文恢復處理
     const handleWebGLContextLost = useCallback((event: Event) => {
@@ -164,6 +305,11 @@ export default function SceneView({
                         selectedReceiverIds={selectedReceiverIds}
                         satellites={satellites}
                         sceneName={sceneName}
+                        uavPath={uavPath}
+                        uavPosition={uavPosition}
+                        photos={photos}
+                        origin={origin}
+                        scale={scale}
                     />
                     <ContactShadows
                         position={[0, 0.1, 0]}

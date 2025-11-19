@@ -32,8 +32,33 @@ function App({ activeView }: AppProps) {
   const currentScene = scenes || "nycu";
   const initialComponent = activeView === "stereogram" ? "3DRT" : "2DRT";
 
-  // ✅ 新增：場景準備狀態
+  // ✅ 場景準備狀態
   const [isSceneReady, setIsSceneReady] = useState(false);
+
+  // ✅ UAV 軌跡狀態（統一管理）
+  const [uavPath, setUavPath] = useState<Array<{ x: number; y: number; z: number }>>([]);
+  
+  // ✅ UAV 當前位置狀態
+  const [uavPosition, setUavPosition] = useState<[number, number, number]>([0, 10, 0]);
+  
+  // ✅ 新增：GPS 位置狀態
+  const [currentGPSPosition, setCurrentGPSPosition] = useState<{ 
+    lat: number; 
+    lon: number; 
+    altitude?: number | null 
+  } | null>(null)
+
+  // ✅ 新增：照片列表狀態
+  const [photos, setPhotos] = useState<Array<{
+    url: string
+    timestamp: string
+    latitude?: number | null
+    longitude?: number | null
+    altitude?: number | null
+  }>>([])
+  
+  // ✅ 移動距離狀態
+  const [totalDistance, setTotalDistance] = useState<number>(0);
 
   const {
     tempDevices,
@@ -89,7 +114,7 @@ function App({ activeView }: AppProps) {
   console.log("App origin:", origin);
   const scale = Number(import.meta.env.VITE_SCENE_SCALE ?? 1);
 
-  // ✅ 新增：等待場景準備好
+  // ✅ 等待場景準備好
   useEffect(() => {
     console.log("⏳ 開始載入場景，等待 3 秒...")
     
@@ -101,6 +126,62 @@ function App({ activeView }: AppProps) {
 
     return () => clearTimeout(timer)
   }, [])
+
+  // ✅ 載入照片資料
+  useEffect(() => {
+    const fetchPhotos = async () => {
+      try {
+        const response = await fetch('https://backend.simworld.website/api/photo-history')
+        const data = await response.json()
+        if (data.success) {
+          setPhotos(data.photos)
+          console.log(`✅ 載入照片資料成功，共 ${data.count} 張`)
+        }
+      } catch (err) {
+        console.error('❌ 載入照片資料失敗:', err)
+      }
+    }
+
+    fetchPhotos()
+  }, [])
+
+  // ✅ 計算移動距離
+  useEffect(() => {
+    if (uavPath.length < 2) {
+      setTotalDistance(0)
+      return
+    }
+
+    const calculateDistance = (path: Array<{ x: number; y: number; z: number }>) => {
+      let distance = 0
+      for (let i = 1; i < path.length; i++) {
+        const prev = path[i - 1]
+        const curr = path[i]
+        distance += Math.sqrt(
+          Math.pow(curr.x - prev.x, 2) +
+          Math.pow(curr.y - prev.y, 2) +
+          Math.pow(curr.z - prev.z, 2)
+        )
+      }
+      return distance
+    }
+
+    const newDistance = calculateDistance(uavPath)
+    setTotalDistance(newDistance)
+    console.log(`📏 更新移動距離: ${newDistance.toFixed(2)}m`)
+  }, [uavPath])
+
+  // ✅ 監聽軌跡變化
+  useEffect(() => {
+    if (uavPath.length > 0) {
+      console.log("📍 App 收到軌跡更新，點數:", uavPath.length);
+    }
+  }, [uavPath]);
+
+  // ✅ 監聽 UAV 位置變化
+  useEffect(() => {
+    console.log("🚁 App 收到 UAV 位置更新:", uavPosition);
+  }, [uavPosition]);
 
   const sortedDevicesForSidebar = useMemo(() => {
     return [...tempDevices].sort((a, b) => {
@@ -258,6 +339,38 @@ function App({ activeView }: AppProps) {
     setHasTempDevices(true);
   }, [setTempDevices, setHasTempDevices]);
 
+  // ✅ 軌跡更新回調函數（接收單個點）
+  const handlePathUpdate = useCallback((newPoint: { x: number; y: number; z: number }) => {
+    console.log("📍 App 接收到新軌跡點:", newPoint);
+    setUavPath((prevPath) => {
+      const newPath = [...prevPath, newPoint]
+      // 限制最多保留 200 個點
+      const finalPath = newPath.length > 200 ? newPath.slice(-200) : newPath
+      console.log(`📍 軌跡點數: ${finalPath.length}`)
+      return finalPath
+    })
+  }, [])
+
+  // ✅ 清除軌跡回調函數
+  const handleClearPath = useCallback(() => {
+    setUavPath([])
+    setTotalDistance(0)
+    console.log("🗑️ 已清除所有軌跡")
+  }, [])
+
+  // ✅ 修改：UAV 位置更新回調函數（接收位置和 GPS 座標）
+  const handleUAVCurrentPositionUpdate = useCallback((
+    position: [number, number, number],
+    gpsPosition?: { lat: number; lon: number; altitude?: number | null }
+  ) => {
+    setUavPosition(position)
+    if (gpsPosition) {
+      setCurrentGPSPosition(gpsPosition)
+      console.log("📍 GPS 位置更新:", gpsPosition)
+    }
+    console.log("🚁 App 接收到 UAV 位置更新:", position)
+  }, [])
+
   const renderActiveComponent = useCallback(() => {
     switch (activeComponent) {
       case "2DRT":
@@ -280,6 +393,11 @@ function App({ activeView }: AppProps) {
             selectedReceiverIds={selectedReceiverIds}
             satellites={satelliteEnabled ? skyfieldSatellites : []}
             sceneName={currentScene}
+            uavPath={uavPath}
+            uavPosition={uavPosition}
+            photos={photos}  // ✅ 新增：傳遞照片資料
+            origin={origin}  // ✅ 新增：傳遞場景原點
+            scale={scale}    // ✅ 新增：傳遞縮放比例
           />
         );
       default:
@@ -304,6 +422,11 @@ function App({ activeView }: AppProps) {
     skyfieldSatellites,
     satelliteEnabled,
     currentScene,
+    uavPath,
+    uavPosition,
+    photos,  // ✅ 新增：加入依賴
+    origin,  // ✅ 新增：加入依賴
+    scale,   // ✅ 新增：加入依賴
   ]);
 
   if (loading) return <div className="loading">載入中...</div>;
@@ -313,11 +436,16 @@ function App({ activeView }: AppProps) {
       {/* ✅ 只有場景準備好後才渲染基準點組件 */}
       {isSceneReady ? (
         <>
-          {/* ✅ 藍色球 - 用戶位置 */}
+          {/* ✅ 藍色球 - 用戶位置（加入 UAV 位置回調） */}
           <UserLocation
             origin={origin}
             scale={scale}
             upsertDevice={handleUpsertDevice}
+            onPathUpdate={handlePathUpdate}
+            pathLength={uavPath.length}
+            totalDistance={totalDistance}
+            onClearPath={handleClearPath}
+            onUAVPositionUpdate={handleUAVCurrentPositionUpdate}
           />
 
           {/* ✅ 紅色球 - TX 干擾源 */}
@@ -370,7 +498,10 @@ function App({ activeView }: AppProps) {
       )}
 
       <UploadPhoto uploadUrl="https://your-backend-api/upload-image" />
-      <CameraUpload onUploadSuccess={handleUploadSuccess} />
+      <CameraUpload 
+        onUploadSuccess={handleUploadSuccess}
+        currentPosition={currentGPSPosition}  // ✅ 新增：傳遞 GPS 座標給 CameraUpload
+      />
 
       <ErrorBoundary>
         <div className="app-container">
