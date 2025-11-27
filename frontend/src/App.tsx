@@ -345,7 +345,7 @@ function App({ activeView }: AppProps) {
     setUavPath((prevPath) => {
       const newPath = [...prevPath, newPoint]
       // 限制最多保留 200 個點
-      const finalPath = newPath.length > 200 ? newPath.slice(-200) : newPath
+      const finalPath = newPath.length > 2000 ? newPath.slice(-2000) : newPath
       console.log(`📍 軌跡點數: ${finalPath.length}`)
       return finalPath
     })

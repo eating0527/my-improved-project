@@ -538,6 +538,8 @@ const MainScene: React.FC<MainSceneProps> = ({
                 position={[x, y, z]}
                 photoUrl={photo.url}
                 timestamp={photo.timestamp}
+                photoIndex={index}  // ✅ 加入這行
+                totalPhotos={photos.length}  // ✅ 加入這行
                 onClick={() => {
                   console.log('📸 點擊照片:', photo.url)
                 }}
