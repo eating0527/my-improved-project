@@ -15,7 +15,7 @@ import {
 } from '../../utils/sceneUtils'
 import UAVPath from '../UAVPath'
 import PhotoMarker from '../PhotoMarker'
-import { latLonToENU } from '../../utils/geo'  // ✅ 加入這行
+import { latLonToENU } from '../../utils/geo'
 
 export interface MainSceneProps {
   devices: any[]
@@ -39,7 +39,7 @@ export interface MainSceneProps {
     longitude?: number | null
     altitude?: number | null
   }>
-  origin?: { lat: number; lon: number; alt: number }  // ✅ 加入 alt
+  origin?: { lat: number; lon: number; alt: number }
   scale?: number
 }
 
@@ -200,7 +200,6 @@ const MainScene: React.FC<MainSceneProps> = ({
     }
   }, [uavPosition])
 
-  // ✅ 監聽照片資料
   useEffect(() => {
     if (photos.length > 0) {
       console.log('📸 MainScene 收到照片資料，數量:', photos.length)
@@ -538,8 +537,10 @@ const MainScene: React.FC<MainSceneProps> = ({
                 position={[x, y, z]}
                 photoUrl={photo.url}
                 timestamp={photo.timestamp}
-                photoIndex={index}  // ✅ 加入這行
-                totalPhotos={photos.length}  // ✅ 加入這行
+                photoIndex={index}
+                totalPhotos={photos.length}
+                latitude={photo.latitude}    // ✅ 傳遞緯度
+                longitude={photo.longitude}  // ✅ 傳遞經度
                 onClick={() => {
                   console.log('📸 點擊照片:', photo.url)
                 }}

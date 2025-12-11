@@ -7,8 +7,10 @@ interface PhotoMarkerProps {
   photoUrl: string
   timestamp: string
   onClick?: () => void
-  photoIndex?: number  // ✅ 新增：照片索引（0 = 最新）
-  totalPhotos?: number  // ✅ 新增：照片總數
+  photoIndex?: number
+  totalPhotos?: number
+  latitude?: number   // ✅ 新增：緯度
+  longitude?: number  // ✅ 新增：經度
 }
 
 /**
@@ -36,8 +38,10 @@ const PhotoMarker: React.FC<PhotoMarkerProps> = ({
   photoUrl,
   timestamp,
   onClick,
-  photoIndex = 0,  // ✅ 預設為 0
-  totalPhotos = 1,  // ✅ 預設為 1
+  photoIndex = 0,
+  totalPhotos = 1,
+  latitude,   // ✅ 接收緯度
+  longitude,  // ✅ 接收經度
 }) => {
   const [hovered, setHovered] = useState(false)
   const [showPreview, setShowPreview] = useState(false)
@@ -63,6 +67,14 @@ const PhotoMarker: React.FC<PhotoMarkerProps> = ({
     }
   }
 
+  // ✅ 格式化經緯度（保留 6 位小數）
+  const formatGPS = (lat?: number, lon?: number) => {
+    if (lat === undefined || lon === undefined) {
+      return '無 GPS 資料'
+    }
+    return `${lat.toFixed(6)}, ${lon.toFixed(6)}`
+  }
+
   return (
     <group position={position}>
       {/* 照片圖標球體（根據相對新鮮度調整透明度） */}
@@ -86,7 +98,7 @@ const PhotoMarker: React.FC<PhotoMarkerProps> = ({
           color={hovered ? '#ff69b4' : '#ffa500'}
           emissive={hovered ? '#ff1493' : '#ff8c00'}
           emissiveIntensity={hovered ? freshness * 2.0 : freshness * 1.5}
-          opacity={freshness * 0.9}  // ✅ 球體根據相對新鮮度調整透明度
+          opacity={freshness * 0.9}
           transparent
         />
       </mesh>
@@ -96,7 +108,7 @@ const PhotoMarker: React.FC<PhotoMarkerProps> = ({
         <ringGeometry args={[6, 8, 32]} />
         <meshBasicMaterial
           color="#ffa500"
-          opacity={freshness * 0.5}  // ✅ 光環根據相對新鮮度調整透明度
+          opacity={freshness * 0.5}
           transparent
           side={THREE.DoubleSide}
         />
@@ -109,7 +121,7 @@ const PhotoMarker: React.FC<PhotoMarkerProps> = ({
         sprite
         style={{
           background: hovered
-            ? `rgba(255, 105, 180, ${freshness * 0.95})`  // ✅ 標籤背景根據相對新鮮度調整透明度
+            ? `rgba(255, 105, 180, ${freshness * 0.95})`
             : `rgba(255, 165, 0, ${freshness * 0.9})`,
           color: 'white',
           padding: '5px 10px',
@@ -126,7 +138,7 @@ const PhotoMarker: React.FC<PhotoMarkerProps> = ({
           transition: 'all 0.3s ease',
         }}
       >
-        📷 照片 #{photoIndex + 1}
+        📷 照片 #{totalPhotos - photoIndex}
       </Html>
 
       {/* 滑鼠懸停時顯示照片預覽 */}
@@ -141,11 +153,11 @@ const PhotoMarker: React.FC<PhotoMarkerProps> = ({
         >
           <div
             style={{
-              background: 'rgba(0, 0, 0, 0.9)',  // ✅ 固定透明度，不受相對新鮮度影響
+              background: 'rgba(0, 0, 0, 0.9)',
               padding: '10px',
               borderRadius: '10px',
               border: '2px solid #ffa500',
-              boxShadow: '0 8px 24px rgba(0, 0, 0, 0.8)',  // ✅ 固定陰影，不受相對新鮮度影響
+              boxShadow: '0 8px 24px rgba(0, 0, 0, 0.8)',
               display: 'flex',
               flexDirection: 'column',
               alignItems: 'center',
@@ -162,7 +174,7 @@ const PhotoMarker: React.FC<PhotoMarkerProps> = ({
                 objectFit: 'cover',
                 borderRadius: '8px',
                 border: '2px solid #ffa500',
-                opacity: 1.0,  // ✅ 照片固定為 100% 透明度，不受相對新鮮度影響
+                opacity: 1.0,
               }}
               onError={(e) => {
                 console.error('❌ 照片載入失敗:', photoUrl)
@@ -170,7 +182,7 @@ const PhotoMarker: React.FC<PhotoMarkerProps> = ({
               }}
             />
             
-            {/* 時間戳記 + 相對亮度資訊 */}
+            {/* 時間戳記 + 球體亮度資訊 + 經緯度 */}
             <div
               style={{
                 color: '#ffa500',
@@ -179,9 +191,17 @@ const PhotoMarker: React.FC<PhotoMarkerProps> = ({
                 textAlign: 'center',
               }}
             >
+              {/* 時間戳記 */}
               <div>{formatTimestamp(timestamp)}</div>
+              
+              {/* 球體亮度 */}
               <div style={{ marginTop: '4px', fontSize: '10px', color: '#ffcc00' }}>
                 💡 球體亮度: {(freshness * 100).toFixed(0)}% ({photoIndex + 1}/{totalPhotos})
+              </div>
+              
+              {/* ✅ 經緯度 */}
+              <div style={{ marginTop: '4px', fontSize: '10px', color: '#66ff66' }}>
+                📍 GPS: {formatGPS(latitude, longitude)}
               </div>
             </div>
           </div>
