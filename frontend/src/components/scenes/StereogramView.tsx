@@ -54,6 +54,19 @@ interface SceneViewProps {
     }>
     origin?: { lat: number; lon: number; alt: number }
     scale?: number
+    // ✅ 新增：USRP 資料 prop
+    usrpData?: Array<{
+        id: number
+        timestamp: string
+        frequency: number
+        power: number
+        snr: number
+        bandwidth: number
+        latitude?: number | null
+        longitude?: number | null
+        altitude?: number | null
+        device_name: string
+    }>
 }
 
 export default function SceneView({
@@ -71,6 +84,7 @@ export default function SceneView({
     photos: initialPhotos = [],
     origin,
     scale,
+    usrpData = [],  // ✅ 新增：接收 usrpData
 }: SceneViewProps) {
     const canvasRef = useRef<HTMLCanvasElement>(null)
     
@@ -108,6 +122,14 @@ export default function SceneView({
             console.log('🎥 照片內容:', photos);
         }
     }, [photos]);
+
+    // ✅ 新增：監聽 USRP 資料
+    useEffect(() => {
+        if (usrpData.length > 0) {
+            console.log('📡 SceneView 收到 USRP 資料，數量:', usrpData.length);
+            console.log('📡 USRP 內容:', usrpData);
+        }
+    }, [usrpData]);
 
     // ✅ 監聽 origin 和 scale
     useEffect(() => {
@@ -310,6 +332,7 @@ export default function SceneView({
                         photos={photos}
                         origin={origin}
                         scale={scale}
+                        usrpData={usrpData} 
                     />
                     <ContactShadows
                         position={[0, 0.1, 0]}

@@ -15,6 +15,7 @@ import {
 } from '../../utils/sceneUtils'
 import UAVPath from '../UAVPath'
 import PhotoMarker from '../PhotoMarker'
+import USRPMarker from '../USRPMarker'
 import { latLonToENU } from '../../utils/geo'
 
 export interface MainSceneProps {
@@ -41,6 +42,18 @@ export interface MainSceneProps {
   }>
   origin?: { lat: number; lon: number; alt: number }
   scale?: number
+  usrpData?: Array<{
+    id: number
+    timestamp: string
+    frequency: number
+    power: number
+    snr: number
+    bandwidth: number
+    latitude?: number | null
+    longitude?: number | null
+    altitude?: number | null
+    device_name: string
+  }>
 }
 
 const UAV_SCALE = 10
@@ -60,6 +73,7 @@ const MainScene: React.FC<MainSceneProps> = ({
   photos = [],
   origin,
   scale,
+  usrpData = [],
 }) => {
   const [isMouseStill, setIsMouseStill] = useState(true)
 
@@ -208,6 +222,15 @@ const MainScene: React.FC<MainSceneProps> = ({
       console.log('📸 scale:', scale)
     }
   }, [photos, origin, scale])
+
+  useEffect(() => {
+    if (usrpData.length > 0) {
+      console.log('📡 MainScene 收到 USRP 資料，數量:', usrpData.length)
+      console.log('📡 USRP 詳細資訊:', usrpData)
+      console.log('📡 origin:', origin)
+      console.log('📡 scale:', scale)
+    }
+  }, [usrpData, origin, scale])
 
   const deviceMeshes = useMemo(() => {
     console.log('🎯 MainScene devices:', devices)
@@ -484,7 +507,6 @@ const MainScene: React.FC<MainSceneProps> = ({
       {deviceMeshes}
       <SatelliteManager satellites={satellites} />
       
-      {/* ✅ 渲染 UAV 軌跡 */}
       {uavPath && uavPath.length > 1 && (
         <UAVPath 
           path={uavPath} 
@@ -493,7 +515,6 @@ const MainScene: React.FC<MainSceneProps> = ({
         />
       )}
 
-      {/* ✅ 渲染照片標記（使用 latLonToENU 正確轉換） */}
       {origin && scale && photos.length > 0 && (
         <>
           {console.log('📸 開始渲染 PhotoMarker，照片數量:', photos.length)}
@@ -505,19 +526,17 @@ const MainScene: React.FC<MainSceneProps> = ({
               return null;
             }
 
-            // ✅ 使用 latLonToENU 轉換（和 UserLocation 一樣）
             const [east, north, up] = latLonToENU(
               photo.latitude,
               photo.longitude,
               photo.altitude ?? 0,
               origin,
-              0  // rotation
+              0
             )
 
-            // ✅ 轉換成場景座標
             const x = east * scale
             const z = north * scale
-            const y = Math.max(up * scale, 10)  // 最少 10 單位高度
+            const y = Math.max(up * scale, 10)
 
             console.log(`📸 照片 ${index} 的 3D 座標:`, {
               原始GPS: { 
@@ -539,8 +558,8 @@ const MainScene: React.FC<MainSceneProps> = ({
                 timestamp={photo.timestamp}
                 photoIndex={index}
                 totalPhotos={photos.length}
-                latitude={photo.latitude}    // ✅ 傳遞緯度
-                longitude={photo.longitude}  // ✅ 傳遞經度
+                latitude={photo.latitude}
+                longitude={photo.longitude}
                 onClick={() => {
                   console.log('📸 點擊照片:', photo.url)
                 }}
@@ -550,11 +569,66 @@ const MainScene: React.FC<MainSceneProps> = ({
         </>
       )}
 
-      {/* ✅ 渲染 UAV 模型（包在 Suspense 裡） + 位置標示 */}
+      {/* ✅ 渲染 USRP 標記（加入經緯度傳遞） */}
+      {origin && scale && usrpData.length > 0 && (
+        <>
+          {console.log('📡 開始渲染 USRP 標記，數量:', usrpData.length)}
+          {usrpData.map((usrp, index) => {
+            console.log(`📡 處理 USRP ${index}:`, usrp);
+            
+            if (!usrp.latitude || !usrp.longitude) {
+              console.warn(`⚠️ USRP ${index} 缺少 GPS 資料:`, usrp);
+              return null;
+            }
+
+            const [east, north, up] = latLonToENU(
+              usrp.latitude,
+              usrp.longitude,
+              usrp.altitude ?? 0,
+              origin,
+              0
+            )
+
+            const x = east * scale
+            const z = north * scale
+            const y = Math.max(up * scale, 10)
+
+            console.log(`📡 USRP ${index} 的 3D 座標:`, {
+              原始GPS: { 
+                lat: usrp.latitude, 
+                lon: usrp.longitude, 
+                alt: usrp.altitude 
+              },
+              origin: origin,
+              ENU: { east, north, up },
+              scale: scale,
+              最終座標: { x, y, z }
+            });
+
+            return (
+              <USRPMarker
+                key={`usrp-${usrp.id}`}
+                position={[x, y, z]}
+                frequency={usrp.frequency}
+                power={usrp.power}
+                snr={usrp.snr}
+                bandwidth={usrp.bandwidth}
+                timestamp={usrp.timestamp}
+                deviceName={usrp.device_name}
+                latitude={usrp.latitude}      // ✅ 傳遞經度
+                longitude={usrp.longitude}    // ✅ 傳遞緯度
+                onClick={() => {
+                  console.log('📡 點擊 USRP:', usrp.device_name)
+                }}
+              />
+            );
+          })}
+        </>
+      )}
+
       {console.log('🎯 準備渲染 UAV，位置:', uavPosition)}
       <Suspense fallback={null}>
         <group position={uavPosition}>
-          {/* UAV 模型 */}
           <UAVFlight
             position={[0, 0, 0]}
             scale={[10, 10, 10]}
@@ -565,7 +639,6 @@ const MainScene: React.FC<MainSceneProps> = ({
             }}
           />
 
-          {/* ✅ UAV 位置標示（當滑鼠靜止時顯示） */}
           {isMouseStill && (
             <Html
               position={[0, 30, 0]}

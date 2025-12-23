@@ -1,0 +1,38 @@
+[
+  {
+    "id": 1,
+    "timestamp": "20251218_103000",
+    "frequency": 2450000000,
+    "power": -45.5,
+    "snr": 18.2,
+    "bandwidth": 20000000,
+    "latitude": 24.943316,
+    "longitude": 121.370802,
+    "altitude": 56.9,
+    "device_name": "USRP-1"
+  },
+  {
+    "id": 2,
+    "timestamp": "20251218_103100",
+    "frequency": 2460000000,
+    "power": -52.3,
+    "snr": 12.5,
+    "bandwidth": 20000000,
+    "latitude": 24.941002,
+    "longitude": 121.367772,
+    "altitude": 62.5,
+    "device_name": "USRP-2"
+  },
+  {
+    "id": 3,
+    "timestamp": "20251218_103200",
+    "frequency": 2470000000,
+    "power": -48.8,
+    "snr": 15.7,
+    "bandwidth": 20000000,
+    "latitude": 24.941132,
+    "longitude": 121.367974,
+    "altitude": 62.5,
+    "device_name": "USRP-3"
+  }
+]

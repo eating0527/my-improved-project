@@ -41,20 +41,34 @@ function App({ activeView }: AppProps) {
   // ✅ UAV 當前位置狀態
   const [uavPosition, setUavPosition] = useState<[number, number, number]>([0, 10, 0]);
   
-  // ✅ 新增：GPS 位置狀態
+  // ✅ GPS 位置狀態
   const [currentGPSPosition, setCurrentGPSPosition] = useState<{ 
     lat: number; 
     lon: number; 
     altitude?: number | null 
   } | null>(null)
 
-  // ✅ 新增：照片列表狀態
+  // ✅ 照片列表狀態
   const [photos, setPhotos] = useState<Array<{
     url: string
     timestamp: string
     latitude?: number | null
     longitude?: number | null
     altitude?: number | null
+  }>>([])
+
+  // ✅ 新增：USRP 資料狀態
+  const [usrpData, setUsrpData] = useState<Array<{
+    id: number
+    timestamp: string
+    frequency: number
+    power: number
+    snr: number
+    bandwidth: number
+    latitude?: number | null
+    longitude?: number | null
+    altitude?: number | null
+    device_name: string
   }>>([])
   
   // ✅ 移動距離狀態
@@ -118,11 +132,10 @@ function App({ activeView }: AppProps) {
   useEffect(() => {
     console.log("⏳ 開始載入場景，等待 3 秒...")
     
-    // 延遲 3 秒確保場景完全載入（行動網路需要更多時間）
     const timer = setTimeout(() => {
       console.log("✅ 場景已準備好，開始渲染基準點")
       setIsSceneReady(true)
-    }, 3000) // 3 秒延遲
+    }, 3000)
 
     return () => clearTimeout(timer)
   }, [])
@@ -143,6 +156,28 @@ function App({ activeView }: AppProps) {
     }
 
     fetchPhotos()
+  }, [])
+
+  // ✅ 新增：載入 USRP 資料
+  useEffect(() => {
+    const fetchUSRPData = async () => {
+      try {
+        const response = await fetch('https://backend.simworld.website/api/usrp-data')
+        const data = await response.json()
+        setUsrpData(data)
+        console.log(`📡 載入 USRP 資料成功，共 ${data.length} 筆`)
+      } catch (err) {
+        console.error('❌ 載入 USRP 資料失敗:', err)
+      }
+    }
+
+    // 初次載入
+    fetchUSRPData()
+    
+    // ✅ 每 5 秒更新一次 USRP 資料（即時更新）
+    const interval = setInterval(fetchUSRPData, 5000)
+    
+    return () => clearInterval(interval)
   }, [])
 
   // ✅ 計算移動距離
@@ -344,7 +379,6 @@ function App({ activeView }: AppProps) {
     console.log("📍 App 接收到新軌跡點:", newPoint);
     setUavPath((prevPath) => {
       const newPath = [...prevPath, newPoint]
-      // 限制最多保留 200 個點
       const finalPath = newPath.length > 2000 ? newPath.slice(-2000) : newPath
       console.log(`📍 軌跡點數: ${finalPath.length}`)
       return finalPath
@@ -358,7 +392,7 @@ function App({ activeView }: AppProps) {
     console.log("🗑️ 已清除所有軌跡")
   }, [])
 
-  // ✅ 修改：UAV 位置更新回調函數（接收位置和 GPS 座標）
+  // ✅ UAV 位置更新回調函數（接收位置和 GPS 座標）
   const handleUAVCurrentPositionUpdate = useCallback((
     position: [number, number, number],
     gpsPosition?: { lat: number; lon: number; altitude?: number | null }
@@ -395,9 +429,10 @@ function App({ activeView }: AppProps) {
             sceneName={currentScene}
             uavPath={uavPath}
             uavPosition={uavPosition}
-            photos={photos}  // ✅ 新增：傳遞照片資料
-            origin={origin}  // ✅ 新增：傳遞場景原點
-            scale={scale}    // ✅ 新增：傳遞縮放比例
+            photos={photos}
+            origin={origin}
+            scale={scale}
+            usrpData={usrpData}  // ✅✅✅ 新增：傳遞 USRP 資料
           />
         );
       default:
@@ -424,19 +459,18 @@ function App({ activeView }: AppProps) {
     currentScene,
     uavPath,
     uavPosition,
-    photos,  // ✅ 新增：加入依賴
-    origin,  // ✅ 新增：加入依賴
-    scale,   // ✅ 新增：加入依賴
+    photos,
+    origin,
+    scale,
+    usrpData,  // ✅ 新增：加入依賴
   ]);
 
   if (loading) return <div className="loading">載入中...</div>;
 
   return (
     <>
-      {/* ✅ 只有場景準備好後才渲染基準點組件 */}
       {isSceneReady ? (
         <>
-          {/* ✅ 藍色球 - 用戶位置（加入 UAV 位置回調） */}
           <UserLocation
             origin={origin}
             scale={scale}
@@ -448,21 +482,18 @@ function App({ activeView }: AppProps) {
             onUAVPositionUpdate={handleUAVCurrentPositionUpdate}
           />
 
-          {/* ✅ 紅色球 - TX 干擾源 */}
           <TxInterferenceLocation
             origin={origin}
             scale={scale}
             upsertDevice={handleUpsertDevice}
           />
 
-          {/* ✅ 綠色球 - RX 干擾源 */}
           <RxInterferenceLocation
             origin={origin}
             scale={scale}
             upsertDevice={handleUpsertDevice}
           />
 
-          {/* ✅ 黃色球 - 基準點3 */}
           <BaselinePoint3Location
             origin={origin}
             scale={scale}
@@ -470,7 +501,6 @@ function App({ activeView }: AppProps) {
           />
         </>
       ) : (
-        // ✅ 顯示載入提示
         <div style={{
           position: 'fixed',
           top: '50%',
@@ -500,7 +530,7 @@ function App({ activeView }: AppProps) {
       <UploadPhoto uploadUrl="https://your-backend-api/upload-image" />
       <CameraUpload 
         onUploadSuccess={handleUploadSuccess}
-        currentPosition={currentGPSPosition}  // ✅ 新增：傳遞 GPS 座標給 CameraUpload
+        currentPosition={currentGPSPosition}
       />
 
       <ErrorBoundary>
