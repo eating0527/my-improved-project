@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState, useMemo } from "react"  // ✅ 加入 useMemo
+import { useEffect, useRef, useState, useMemo } from "react"
 import { latLonToENU } from "../utils/geo"
 import points from "../data/points.json"
 import { useGPSSync } from "../hooks/useGPSSync"
@@ -18,6 +18,16 @@ interface UserLocationProps {
     position: [number, number, number],
     gpsPosition?: { lat: number; lon: number; altitude?: number | null }
   ) => void
+  onMultiDevicePositionUpdate?: (
+    deviceId: string,
+    position: [number, number, number],
+    lat: number,
+    lon: number,
+    accuracy: number,
+    deviceName?: string  // ✅ 新增：deviceName 參數
+  ) => void
+  onMyDeviceIdUpdate?: (deviceId: string) => void
+  onDeviceDisconnected?: (deviceId: string) => void
 }
 
 export default function UserLocation({
@@ -30,6 +40,9 @@ export default function UserLocation({
   totalDistance = 0,
   onClearPath,
   onUAVPositionUpdate,
+  onMultiDevicePositionUpdate,
+  onMyDeviceIdUpdate,
+  onDeviceDisconnected,
 }: UserLocationProps) {
   const upsertRef = useRef(upsertDevice)
   const [locationStatus, setLocationStatus] = useState<string>("")
@@ -42,76 +55,234 @@ export default function UserLocation({
   })
   
   const [currentPhoto, setCurrentPhoto] = useState<string | null>(null)
-  
-  // ✅ UAV 位置狀態
   const [uavPosition, setUavPosition] = useState<[number, number, number]>([0, 10, 0])
+  const [selectedDeviceId, setSelectedDeviceId] = useState<string | null>(null)
+  
+  // ✅ 新增：裝置名稱編輯狀態
+  const [isEditingName, setIsEditingName] = useState(false)
+  const [tempName, setTempName] = useState("")
   
   const isMobile = /iPhone|iPad|iPod|Android/i.test(navigator.userAgent)
   
+  // ✅ 修改：從 useGPSSync 取得 deviceName 和 updateDeviceName
   const { 
-    lat: syncedLat, 
-    lon: syncedLon, 
-    alt: syncedAlt, 
-    accuracy: syncedAccuracy, 
+    myDeviceId,
+    deviceName,
+    updateDeviceName,
+    allDevices,
+    myGPS,
     clearPathTrigger, 
     sendClearPath,
     photoUploadEvent,
     photoDeleteEvent
   } = useGPSSync(localGPS)
   
-  // ✅ 使用 useMemo 避免每次都建立新物件
-  const syncedGPS = useMemo(() => ({
-    lat: syncedLat,
-    lon: syncedLon,
-    alt: syncedAlt,
-    accuracy: syncedAccuracy
-  }), [syncedLat, syncedLon, syncedAlt, syncedAccuracy])
+  // ✅ 追蹤上一次的裝置列表，用於檢測斷線
+  const prevDevicesRef = useRef<Set<string>>(new Set())
+  
+  // ✅ 當 deviceName 變更時，同步 tempName
+  useEffect(() => {
+    setTempName(deviceName)
+  }, [deviceName])
+  
+  // ✅ 當收到 myDeviceId 時，通知父組件
+  useEffect(() => {
+    if (myDeviceId && onMyDeviceIdUpdate) {
+      console.log('📱 通知父組件當前裝置 ID:', myDeviceId.substring(0, 8))
+      onMyDeviceIdUpdate(myDeviceId)
+    }
+  }, [myDeviceId, onMyDeviceIdUpdate])
+  
+  // ✅ 自動選擇當前裝置
+  useEffect(() => {
+    if (myDeviceId && !selectedDeviceId) {
+      setSelectedDeviceId(myDeviceId)
+      console.log('📱 自動選擇當前裝置:', myDeviceId.substring(0, 8))
+    }
+  }, [myDeviceId, selectedDeviceId])
+  
+  // ✅ 關鍵修正：當 myDeviceId 變更時，立即清理舊的裝置資料
+  useEffect(() => {
+    if (!myDeviceId) {
+      return
+    }
+
+    // ✅ 檢查是否是重新連線（deviceId 變更）
+    const allDeviceIds = Array.from(allDevices.keys())
+    const oldDeviceIds = allDeviceIds.filter(id => id !== myDeviceId)
+
+    if (oldDeviceIds.length > 0) {
+      console.log('🔄 檢測到重新連線，清理舊裝置:', oldDeviceIds.map(id => id.substring(0, 8)))
+      
+      // ✅ 通知父組件清理舊裝置
+      if (onDeviceDisconnected) {
+        oldDeviceIds.forEach(oldId => {
+          console.log('🗑️ UserLocation 通知父組件清理舊裝置:', oldId.substring(0, 8))
+          onDeviceDisconnected(oldId)
+        })
+      }
+    }
+  }, [myDeviceId, allDevices, onDeviceDisconnected])
+  
+  // ✅ 監聽 allDevices 變化，檢測裝置斷線並通知父組件
+  useEffect(() => {
+    const currentDeviceIds = new Set(allDevices.keys())
+    const prevDeviceIds = prevDevicesRef.current
+    
+    // ✅ 第一次執行，初始化 prevDevicesRef
+    if (prevDeviceIds.size === 0 && currentDeviceIds.size > 0) {
+      prevDevicesRef.current = currentDeviceIds
+      console.log('🔵 初始化 prevDevicesRef，裝置數:', currentDeviceIds.size)
+      return
+    }
+    
+    // ✅ 找出斷線的裝置（在舊列表中但不在新列表中）
+    const disconnectedDevices: string[] = []
+    prevDeviceIds.forEach(deviceId => {
+      if (!currentDeviceIds.has(deviceId)) {
+        disconnectedDevices.push(deviceId)
+      }
+    })
+    
+    // ✅ 通知父組件清理斷線裝置
+    if (disconnectedDevices.length > 0 && onDeviceDisconnected) {
+      disconnectedDevices.forEach(deviceId => {
+        console.log('🗑️ UserLocation 通知父組件清理斷線裝置:', deviceId.substring(0, 8))
+        onDeviceDisconnected(deviceId)
+      })
+    }
+    
+    // ✅ 更新 ref
+    prevDevicesRef.current = currentDeviceIds
+  }, [allDevices, onDeviceDisconnected])
+  
+  // ✅ 修改：當 allDevices 更新時，通知父組件所有裝置的位置（包含自己 + deviceName）
+  useEffect(() => {
+    if (!onMultiDevicePositionUpdate) {
+      return
+    }
+
+    if (allDevices.size === 0) {
+      console.log('📱 目前沒有裝置連線')
+      return
+    }
+
+    console.log(`📱 開始更新 ${allDevices.size} 個裝置的位置（包含自己）`)
+
+    allDevices.forEach((device, deviceId) => {
+      // 計算 3D 座標
+      const [east, north, up] = latLonToENU(
+        device.lat,
+        device.lon,
+        device.alt,
+        origin,
+        rotation
+      )
+
+      const safeY = Math.max(up * scale, 10)
+      const position: [number, number, number] = [east * scale, safeY, north * scale]
+
+      const isMyDevice = deviceId === myDeviceId
+
+      console.log(`📱 通知父組件裝置 ${deviceId.substring(0, 8)} 位置:`, {
+        deviceName: device.deviceName,
+        position,
+        lat: device.lat,
+        lon: device.lon,
+        accuracy: device.accuracy,
+        isMyDevice
+      })
+
+      // ✅ 修改：傳遞 deviceName 給父組件
+      onMultiDevicePositionUpdate(
+        deviceId,
+        position,
+        device.lat,
+        device.lon,
+        device.accuracy,
+        device.deviceName  // ✅ 新增：傳遞 deviceName
+      )
+    })
+
+    console.log(`✅ 已更新 ${allDevices.size} 個裝置的位置（包含自己）`)
+  }, [allDevices, origin, scale, rotation, onMultiDevicePositionUpdate, myDeviceId])
+  
+  // ✅ 取得當前選擇的裝置 GPS
+  const selectedGPS = useMemo(() => {
+    // ✅ 手機永遠使用本地 GPS
+    if (isMobile) {
+      return myGPS
+    }
+
+    // ✅ 筆電：如果有選擇裝置，使用該裝置的 GPS
+    if (selectedDeviceId) {
+      const device = allDevices.get(selectedDeviceId)
+      if (device) {
+        console.log('📍 筆電使用選擇的裝置 GPS:', {
+          deviceId: selectedDeviceId.substring(0, 8),
+          deviceName: device.deviceName,
+          lat: device.lat,
+          lon: device.lon,
+          accuracy: device.accuracy
+        })
+        return device
+      } else {
+        console.log('⚠️ 選擇的裝置已斷線，切換到第一個可用裝置')
+        // ✅ 如果選擇的裝置已斷線，自動切換到第一個可用裝置
+        const firstDevice = allDevices.values().next()
+        if (!firstDevice.done) {
+          const firstDeviceId = Array.from(allDevices.keys())[0]
+          setSelectedDeviceId(firstDeviceId)
+          console.log('✅ 已切換到裝置:', firstDeviceId.substring(0, 8))
+          return firstDevice.value
+        }
+      }
+    }
+    
+    // ✅ 筆電：沒有選擇裝置時，使用本地 GPS（通常是 0,0）
+    console.log('⚠️ 筆電沒有選擇裝置或找不到裝置，使用本地 GPS')
+    return myGPS
+  }, [selectedDeviceId, allDevices, myGPS, isMobile])
   
   useEffect(() => {
     upsertRef.current = upsertDevice
   }, [upsertDevice])
 
-  // ✅ 修改：只有當 GPS 座標有效時才通知父組件
+  // ✅ 只有當 GPS 座標有效時才通知父組件
   useEffect(() => {
-    console.log('🔍 [UserLocation] useEffect 觸發');
-    console.log('🔍 onUAVPositionUpdate 存在?', !!onUAVPositionUpdate);
-    console.log('🔍 uavPosition:', uavPosition);
-    console.log('🔍 isMobile:', isMobile);
-    console.log('🔍 localGPS:', localGPS);
-    console.log('🔍 syncedGPS:', syncedGPS);
-    
     if (!onUAVPositionUpdate) {
-      console.warn('⚠️ [UserLocation] onUAVPositionUpdate 不存在');
-      return;
+      return
     }
     
-    const gpsPos = isMobile ? localGPS : syncedGPS;
-    const alt = isMobile ? localGPS.alt : syncedGPS.alt;
+    const gpsPos = selectedGPS
     
     // ✅ 只有當 GPS 座標有效時才回傳（不是 0,0）
     if (gpsPos.lat === 0 && gpsPos.lon === 0) {
-      console.warn('⚠️ [UserLocation] GPS 座標無效 (0, 0)，跳過更新');
-      return;
+      console.log('⚠️ GPS 座標無效 (0, 0)，跳過更新')
+      return
     }
     
     // ✅ 額外檢查：精度太差時也不更新
     if (gpsPos.accuracy > 500) {
-      console.warn(`⚠️ [UserLocation] GPS 精度太差 (${gpsPos.accuracy.toFixed(2)}m)，跳過更新`);
-      return;
+      console.log(`⚠️ GPS 精度太差 (${gpsPos.accuracy.toFixed(2)}m)，跳過更新`)
+      return
     }
     
     const gpsData = {
       lat: gpsPos.lat,
       lon: gpsPos.lon,
-      altitude: alt
-    };
+      altitude: gpsPos.alt
+    }
     
-    console.log('✅ [UserLocation] 準備回傳有效的 GPS 資料:', gpsData);
+    console.log('✅ 通知父組件 UAV 位置更新:', {
+      position: uavPosition,
+      gps: gpsData,
+      deviceType: isMobile ? '手機' : '筆電',
+      deviceId: selectedDeviceId?.substring(0, 8) || 'N/A'
+    })
     
-    onUAVPositionUpdate(uavPosition, gpsData);
-    
-    console.log('✅ [UserLocation] 已通知父組件 UAV 位置更新:', uavPosition, gpsData);
-  }, [uavPosition, onUAVPositionUpdate, isMobile, localGPS, syncedGPS]);
+    onUAVPositionUpdate(uavPosition, gpsData)
+  }, [uavPosition, onUAVPositionUpdate, selectedGPS, isMobile, selectedDeviceId])
 
   const lastPositionRef = useRef<{ lat: number; lon: number; time: number }>({ 
     lat: 0, 
@@ -238,14 +409,10 @@ export default function UserLocation({
       .sort((a, b) => a.distance - b.distance)
 
     if (nearbyPoints.length === 0) {
-      console.log("ℹ️ 沒有找到附近的已知點，使用原始 GPS 座標")
       return [lat, lon]
     }
 
-    console.log(`📍 最近的點: ${nearbyPoints[0].name}, 距離: ${nearbyPoints[0].distance.toFixed(2)} 公尺`)
-    
     if (nearbyPoints[0].distance > 50) {
-      console.log("ℹ️ 最近點距離較遠，使用原始 GPS 座標")
       return [lat, lon]
     }
 
@@ -281,17 +448,10 @@ export default function UserLocation({
     
     if (!isMovingRef.current && nearbyPoints[0].distance < 30) {
       correctionRatio = Math.min(0.5, correctionRatio * 1.5)
-      console.log("🛑 靜止狀態，增加校正比例以減少漂移")
     }
 
     const adjustedLat = lat * (1 - correctionRatio) + correctedLat * correctionRatio
     const adjustedLon = lon * (1 - correctionRatio) + correctedLon * correctionRatio
-
-    if (correctionRatio > 0) {
-      console.log(`📐 校正比例: ${(correctionRatio * 100).toFixed(1)}%`)
-    } else {
-      console.log("ℹ️ 使用原始 GPS 座標")
-    }
 
     return [adjustedLat, adjustedLon]
   }
@@ -360,6 +520,7 @@ export default function UserLocation({
     return [lat, lon]
   }
 
+  // ✅ 手機處理本地 GPS（使用 Geolocation API）
   useEffect(() => {
     if (!("geolocation" in navigator)) {
       console.error("❌ 瀏覽器不支援 geolocation")
@@ -384,19 +545,21 @@ export default function UserLocation({
         }
       )
 
+      // ✅ 更新 localGPS（觸發 useGPSSync 發送）
       setLocalGPS({ 
         lat, 
         lon, 
         alt,
         accuracy: acc
       })
-      console.log(`✅ [${isMobile ? '手機' : '筆電'}] 已更新 localGPS (精度: ${acc.toFixed(2)}m)`)
 
+      // ✅ 筆電不處理本地 GPS，只等待接收
       if (!isMobile) {
         console.log('💻 筆電不處理本地 GPS，等待接收手機 GPS')
         return
       }
 
+      // ✅ 以下是手機的 GPS 處理邏輯
       console.log('📱 手機處理本地 GPS...')
 
       if (acc > 500) {
@@ -419,22 +582,14 @@ export default function UserLocation({
       const [smoothedLat, smoothedLon] = smoothPosition(useLat, useLon, 0.3)
 
       const [adjustedLat, adjustedLon] = adjustPosition(smoothedLat, smoothedLon, acc)
-      
-      if (adjustedLat !== smoothedLat || adjustedLon !== smoothedLon) {
-        const offset = calcDistance(smoothedLat, smoothedLon, adjustedLat, adjustedLon)
-        console.log(`📏 校正偏移量: ${offset.toFixed(2)} 公尺`)
-      }
 
       const [east, north, up] = latLonToENU(adjustedLat, adjustedLon, alt, origin, rotation)
 
       const safeY = Math.max(up * scale, 10)
 
-      // ✅ 更新 UAV 位置
       const newPosition: [number, number, number] = [east * scale, safeY, north * scale]
       setUavPosition(newPosition)
-      console.log('📱 手機更新 UAV 位置:', newPosition)
 
-      console.log('📱 手機更新設備位置')
       upsertRef.current({
         id: "user",
         role: "user",
@@ -445,7 +600,6 @@ export default function UserLocation({
 
       if (onPathUpdate) {
         onPathUpdate({ x: east * scale, y: safeY, z: north * scale })
-        console.log('📱 手機傳遞軌跡點給父組件')
       }
 
       forceUpdate({})
@@ -496,14 +650,14 @@ export default function UserLocation({
     }
   }, [origin, scale, rotation, isMobile, onPathUpdate])
 
+  // ✅ 筆電根據選擇的裝置更新位置
   useEffect(() => {
     if (isMobile) {
-      console.log('📱 手機不需要使用 syncedGPS')
       return
     }
 
-    if (syncedGPS.lat === 0 && syncedGPS.lon === 0) {
-      console.log('💻 筆電等待手機 GPS...')
+    if (selectedGPS.lat === 0 && selectedGPS.lon === 0) {
+      console.log('💻 筆電等待 GPS 資料...')
       return
     }
 
@@ -511,42 +665,41 @@ export default function UserLocation({
     const distanceFromLast = calcDistance(
       lastProcessed.lat,
       lastProcessed.lon,
-      syncedGPS.lat,
-      syncedGPS.lon
+      selectedGPS.lat,
+      selectedGPS.lon
     )
 
     if (distanceFromLast < 0.5 && lastProcessed.lat !== 0) {
-      console.log('💻 筆電：座標變化太小，忽略此次更新')
       return
     }
 
-    console.log("💻 筆電使用手機的 syncedGPS 更新設備位置：", syncedGPS)
+    console.log("💻 筆電使用選擇的裝置 GPS 更新位置：", {
+      deviceId: selectedDeviceId?.substring(0, 8),
+      lat: selectedGPS.lat,
+      lon: selectedGPS.lon
+    })
 
-    lastProcessedGPSRef.current = { lat: syncedGPS.lat, lon: syncedGPS.lon }
+    lastProcessedGPSRef.current = { lat: selectedGPS.lat, lon: selectedGPS.lon }
 
-    if (syncedGPS.accuracy !== undefined && syncedGPS.accuracy !== 999) {
-      lastReliablePositionRef.current.accuracy = syncedGPS.accuracy
-      lastReliablePositionRef.current.lat = syncedGPS.lat
-      lastReliablePositionRef.current.lon = syncedGPS.lon
-      console.log(`💻 筆電更新精度: ${syncedGPS.accuracy.toFixed(2)}m`)
+    if (selectedGPS.accuracy !== undefined && selectedGPS.accuracy !== 999) {
+      lastReliablePositionRef.current.accuracy = selectedGPS.accuracy
+      lastReliablePositionRef.current.lat = selectedGPS.lat
+      lastReliablePositionRef.current.lon = selectedGPS.lon
     }
 
     const [east, north, up] = latLonToENU(
-      syncedGPS.lat,
-      syncedGPS.lon,
-      syncedGPS.alt,
+      selectedGPS.lat,
+      selectedGPS.lon,
+      selectedGPS.alt,
       origin,
       rotation
     )
 
     const safeY = Math.max(up * scale, 10)
 
-    // ✅ 筆電也更新 UAV 位置
     const newPosition: [number, number, number] = [east * scale, safeY, north * scale]
     setUavPosition(newPosition)
-    console.log('💻 筆電更新 UAV 位置:', newPosition)
 
-    console.log('💻 筆電更新設備位置')
     upsertRef.current({
       id: "user",
       role: "user",
@@ -557,11 +710,10 @@ export default function UserLocation({
 
     if (onPathUpdate) {
       onPathUpdate({ x: east * scale, y: safeY, z: north * scale })
-      console.log('💻 筆電傳遞軌跡點給父組件')
     }
 
     forceUpdate({})
-  }, [syncedGPS, origin, scale, rotation, isMobile, onPathUpdate])
+  }, [selectedGPS, origin, scale, rotation, isMobile, onPathUpdate, selectedDeviceId])
 
   const handleClearPath = () => {
     console.log('🗑️ 點擊清除軌跡按鈕')
@@ -569,20 +721,71 @@ export default function UserLocation({
     
     if (onClearPath) {
       onClearPath()
-      console.log('✅ 已通知父組件清除軌跡')
     }
     
     sendClearPath()
-    console.log('✅ 已發送清除軌跡指令到 WebSocket')
   }
 
   const handleClosePhoto = () => {
-    console.log('📸 關閉照片顯示')
     setCurrentPhoto(null)
   }
 
   return (
     <>
+      {!isMobile && allDevices.size > 0 && (
+        <div style={{
+          position: 'fixed',
+          top: '55px',
+          right: '10px',
+          background: 'rgba(0, 0, 0, 0.8)',
+          padding: '10px',
+          borderRadius: '5px',
+          zIndex: 1000,
+          border: '1px solid #00ff00',
+        }}>
+          <label style={{ 
+            color: '#00ff00', 
+            marginRight: '10px',
+            fontSize: '12px',
+            fontFamily: 'monospace'
+          }}>
+            📱 選擇裝置:
+          </label>
+          <select
+            value={selectedDeviceId || ''}
+            onChange={(e) => {
+              setSelectedDeviceId(e.target.value)
+              console.log('📱 切換裝置:', e.target.value.substring(0, 8))
+            }}
+            style={{
+              padding: '5px 10px',
+              borderRadius: '3px',
+              border: '1px solid #00ff00',
+              background: '#222',
+              color: '#00ff00',
+              cursor: 'pointer',
+              fontSize: '12px',
+              fontFamily: 'monospace'
+            }}
+          >
+            {Array.from(allDevices.entries()).map(([deviceId, device]) => (
+              <option key={deviceId} value={deviceId}>
+                {deviceId === myDeviceId ? '🔵 ' : '📱 '} 
+                {device.deviceName || deviceId.substring(0, 8)}
+              </option>
+            ))}
+          </select>
+          <div style={{
+            marginTop: '5px',
+            fontSize: '10px',
+            color: '#888',
+            fontFamily: 'monospace'
+          }}>
+            連線裝置數: {allDevices.size}
+          </div>
+        </div>
+      )}
+
       {locationStatus && (
         <div style={{
           position: 'fixed',
@@ -617,12 +820,120 @@ export default function UserLocation({
         <div style={{ marginBottom: '10px', fontSize: '14px', fontWeight: 'bold' }}>
           🚁 數位孿生監控 {isMobile ? '📱' : '💻'}
         </div>
+        
+        {/* ✅ 新增：裝置名稱編輯區塊 */}
+        <div style={{ 
+          marginBottom: '10px', 
+          padding: '8px',
+          background: 'rgba(0, 191, 255, 0.1)',
+          borderRadius: '3px',
+          border: '1px solid #00BFFF'
+        }}>
+          <div style={{ fontSize: '10px', color: '#888', marginBottom: '3px' }}>
+            裝置 ID: {myDeviceId?.substring(0, 12)}
+          </div>
+          
+          {isEditingName ? (
+            <div style={{ display: 'flex', gap: '5px', alignItems: 'center' }}>
+              <input
+                type="text"
+                value={tempName}
+                onChange={(e) => setTempName(e.target.value)}
+                style={{
+                  flex: 1,
+                  padding: '3px 5px',
+                  background: '#222',
+                  border: '1px solid #00ff00',
+                  color: '#00ff00',
+                  borderRadius: '3px',
+                  fontSize: '11px',
+                  fontFamily: 'monospace'
+                }}
+                maxLength={20}
+                autoFocus
+                onKeyDown={(e) => {
+                  if (e.key === 'Enter') {
+                    updateDeviceName(tempName)
+                    setIsEditingName(false)
+                  } else if (e.key === 'Escape') {
+                    setTempName(deviceName)
+                    setIsEditingName(false)
+                  }
+                }}
+              />
+              <button
+                onClick={() => {
+                  updateDeviceName(tempName)
+                  setIsEditingName(false)
+                }}
+                style={{
+                  padding: '3px 8px',
+                  background: '#00ff00',
+                  color: 'black',
+                  border: 'none',
+                  borderRadius: '3px',
+                  cursor: 'pointer',
+                  fontSize: '10px',
+                  fontWeight: 'bold'
+                }}
+              >
+                ✓
+              </button>
+              <button
+                onClick={() => {
+                  setTempName(deviceName)
+                  setIsEditingName(false)
+                }}
+                style={{
+                  padding: '3px 8px',
+                  background: '#ff4444',
+                  color: 'white',
+                  border: 'none',
+                  borderRadius: '3px',
+                  cursor: 'pointer',
+                  fontSize: '10px',
+                  fontWeight: 'bold'
+                }}
+              >
+                ✕
+              </button>
+            </div>
+          ) : (
+            <div 
+              style={{ 
+                display: 'flex', 
+                justifyContent: 'space-between', 
+                alignItems: 'center',
+                cursor: 'pointer',
+                padding: '3px'
+              }}
+              onClick={() => {
+                setIsEditingName(true)
+                setTempName(deviceName)
+              }}
+            >
+              <span style={{ fontSize: '12px', color: '#00BFFF', fontWeight: 'bold' }}>
+                {deviceName}
+              </span>
+              <span style={{ fontSize: '10px', color: '#888' }}>✏️ 編輯</span>
+            </div>
+          )}
+        </div>
+        
         <div>設備: {isMobile ? '手機' : '筆電'}</div>
-        <div>緯度: {(isMobile ? localGPS.lat : syncedGPS.lat).toFixed(6)}°</div>
-        <div>經度: {(isMobile ? localGPS.lon : syncedGPS.lon).toFixed(6)}°</div>
-        <div>誤差範圍: {(isMobile ? localGPS.accuracy : syncedGPS.accuracy).toFixed(2)}m</div>
+        <div>緯度: {selectedGPS.lat.toFixed(6)}°</div>
+        <div>經度: {selectedGPS.lon.toFixed(6)}°</div>
+        <div>誤差範圍: {selectedGPS.accuracy.toFixed(2)}m</div>
         <div>移動狀態: {isMovingRef.current ? '🟢 移動中' : '🔴 靜止'}</div>
         <div>基準點: {points.length > 0 ? `📡 ${points.length} 個` : '❌ 未載入'}</div>
+        
+        {!isMobile && (
+          <div>連線裝置: {allDevices.size} 台</div>
+        )}
+        
+        {isMobile && allDevices.size > 0 && (
+          <div>連線裝置: {allDevices.size} 台</div>
+        )}
         
         <div style={{ marginTop: '8px', borderTop: '1px solid #00ff00', paddingTop: '8px' }}>
           <div style={{ fontSize: '13px', fontWeight: 'bold', marginBottom: '5px' }}>
@@ -654,16 +965,13 @@ export default function UserLocation({
         </div>
       </div>
 
-      {/* ✅ 照片歷史記錄 */}
       <PhotoHistory
         onPhotoClick={(url) => {
-          console.log('📸 點擊照片:', url)
           setCurrentPhoto(url)
         }}
         photoDeleteEvent={photoDeleteEvent}
       />
 
-      {/* ✅ 照片顯示組件 */}
       <PhotoViewer
         photoUrl={currentPhoto}
         onClose={handleClosePhoto}

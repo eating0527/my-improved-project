@@ -57,7 +57,7 @@ function App({ activeView }: AppProps) {
     altitude?: number | null
   }>>([])
 
-  // ✅ 新增：USRP 資料狀態
+  // ✅ USRP 資料狀態
   const [usrpData, setUsrpData] = useState<Array<{
     id: number
     timestamp: string
@@ -73,6 +73,19 @@ function App({ activeView }: AppProps) {
   
   // ✅ 移動距離狀態
   const [totalDistance, setTotalDistance] = useState<number>(0);
+
+  // ✅ 修改：多裝置 UAV 位置管理（加上 deviceName）
+  const [allDevicePositions, setAllDevicePositions] = useState<Map<string, {
+    position: [number, number, number]
+    deviceId: string
+    deviceName?: string  // ✅ 新增：裝置名稱
+    lat: number
+    lon: number
+    accuracy: number
+  }>>(new Map())
+
+  // ✅ 新增：當前裝置 ID
+  const [myDeviceId, setMyDeviceId] = useState<string | null>(null)
 
   const {
     tempDevices,
@@ -158,7 +171,7 @@ function App({ activeView }: AppProps) {
     fetchPhotos()
   }, [])
 
-  // ✅ 新增：載入 USRP 資料
+  // ✅ 載入 USRP 資料
   useEffect(() => {
     const fetchUSRPData = async () => {
       try {
@@ -217,6 +230,16 @@ function App({ activeView }: AppProps) {
   useEffect(() => {
     console.log("🚁 App 收到 UAV 位置更新:", uavPosition);
   }, [uavPosition]);
+
+  // ✅ 修改：監聽多裝置位置變化（顯示 deviceName）
+  useEffect(() => {
+    if (allDevicePositions.size > 0) {
+      console.log("📱 App 收到多裝置位置更新，裝置數:", allDevicePositions.size);
+      allDevicePositions.forEach((device, deviceId) => {
+        console.log(`📱 裝置 ${deviceId.substring(0, 8)} (${device.deviceName || 'N/A'}):`, device);
+      });
+    }
+  }, [allDevicePositions]);
 
   const sortedDevicesForSidebar = useMemo(() => {
     return [...tempDevices].sort((a, b) => {
@@ -405,6 +428,62 @@ function App({ activeView }: AppProps) {
     console.log("🚁 App 接收到 UAV 位置更新:", position)
   }, [])
 
+  // ✅ 修改：多裝置位置更新回調（接收 deviceName）
+  const handleMultiDevicePositionUpdate = useCallback((
+    deviceId: string,
+    position: [number, number, number],
+    lat: number,
+    lon: number,
+    accuracy: number,
+    deviceName?: string  // ✅ 新增：接收 deviceName 參數
+  ) => {
+    console.log(`📱 App 接收到裝置 ${deviceId.substring(0, 8)} 位置更新:`, {
+      position,
+      lat,
+      lon,
+      accuracy,
+      deviceName  // ✅ 新增：記錄 deviceName
+    });
+
+    setAllDevicePositions(prev => {
+      const newMap = new Map(prev);
+      newMap.set(deviceId, {
+        position,
+        deviceId,
+        deviceName,  // ✅ 新增：儲存 deviceName
+        lat,
+        lon,
+        accuracy
+      });
+      console.log(`📱 更新後裝置總數: ${newMap.size}`);
+      return newMap;
+    });
+  }, []);
+
+  // ✅ 新增：接收當前裝置 ID
+  const handleMyDeviceIdUpdate = useCallback((deviceId: string) => {
+    console.log("📱 App 接收到當前裝置 ID:", deviceId.substring(0, 8));
+    setMyDeviceId(deviceId);
+  }, []);
+
+  // ✅ 新增：處理裝置斷線（從 UserLocation 接收）
+  const handleDeviceDisconnected = useCallback((deviceId: string) => {
+    console.log("🗑️ App 接收到裝置斷線通知:", deviceId.substring(0, 8));
+    
+    setAllDevicePositions(prev => {
+      const newMap = new Map(prev);
+      const deleted = newMap.delete(deviceId);
+      
+      if (deleted) {
+        console.log(`✅ 已從 allDevicePositions 移除裝置 ${deviceId.substring(0, 8)}，剩餘: ${newMap.size}`);
+      } else {
+        console.log(`⚠️ 裝置 ${deviceId.substring(0, 8)} 不在 allDevicePositions 中`);
+      }
+      
+      return newMap;
+    });
+  }, []);
+
   const renderActiveComponent = useCallback(() => {
     switch (activeComponent) {
       case "2DRT":
@@ -432,7 +511,9 @@ function App({ activeView }: AppProps) {
             photos={photos}
             origin={origin}
             scale={scale}
-            usrpData={usrpData}  // ✅✅✅ 新增：傳遞 USRP 資料
+            usrpData={usrpData}
+            allDevicePositions={allDevicePositions}
+            myDeviceId={myDeviceId}
           />
         );
       default:
@@ -462,7 +543,9 @@ function App({ activeView }: AppProps) {
     photos,
     origin,
     scale,
-    usrpData,  // ✅ 新增：加入依賴
+    usrpData,
+    allDevicePositions,
+    myDeviceId,
   ]);
 
   if (loading) return <div className="loading">載入中...</div>;
@@ -480,6 +563,9 @@ function App({ activeView }: AppProps) {
             totalDistance={totalDistance}
             onClearPath={handleClearPath}
             onUAVPositionUpdate={handleUAVCurrentPositionUpdate}
+            onMultiDevicePositionUpdate={handleMultiDevicePositionUpdate}
+            onMyDeviceIdUpdate={handleMyDeviceIdUpdate}
+            onDeviceDisconnected={handleDeviceDisconnected}
           />
 
           <TxInterferenceLocation

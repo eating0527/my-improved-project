@@ -54,7 +54,6 @@ interface SceneViewProps {
     }>
     origin?: { lat: number; lon: number; alt: number }
     scale?: number
-    // ✅ 新增：USRP 資料 prop
     usrpData?: Array<{
         id: number
         timestamp: string
@@ -67,6 +66,15 @@ interface SceneViewProps {
         altitude?: number | null
         device_name: string
     }>
+    // ✅ 新增：多裝置 UAV 位置
+    allDevicePositions?: Map<string, {
+        position: [number, number, number]
+        deviceId: string
+        lat: number
+        lon: number
+        accuracy: number
+    }>
+    myDeviceId?: string | null
 }
 
 export default function SceneView({
@@ -84,7 +92,9 @@ export default function SceneView({
     photos: initialPhotos = [],
     origin,
     scale,
-    usrpData = [],  // ✅ 新增：接收 usrpData
+    usrpData = [],
+    allDevicePositions,  // ✅ 新增
+    myDeviceId,  // ✅ 新增
 }: SceneViewProps) {
     const canvasRef = useRef<HTMLCanvasElement>(null)
     
@@ -130,6 +140,23 @@ export default function SceneView({
             console.log('📡 USRP 內容:', usrpData);
         }
     }, [usrpData]);
+
+    // ✅ 新增：監聽多裝置位置
+    useEffect(() => {
+        if (allDevicePositions && allDevicePositions.size > 0) {
+            console.log('🎥 SceneView 收到多裝置位置，數量:', allDevicePositions.size);
+            allDevicePositions.forEach((device, deviceId) => {
+                console.log(`🎥 裝置 ${deviceId.substring(0, 8)}:`, device);
+            });
+        }
+    }, [allDevicePositions]);
+
+    // ✅ 新增：監聽當前裝置 ID
+    useEffect(() => {
+        if (myDeviceId) {
+            console.log('🎥 SceneView 收到當前裝置 ID:', myDeviceId.substring(0, 8));
+        }
+    }, [myDeviceId]);
 
     // ✅ 監聽 origin 和 scale
     useEffect(() => {
@@ -332,7 +359,9 @@ export default function SceneView({
                         photos={photos}
                         origin={origin}
                         scale={scale}
-                        usrpData={usrpData} 
+                        usrpData={usrpData}
+                        allDevicePositions={allDevicePositions}  // ✅ 新增
+                        myDeviceId={myDeviceId}  // ✅ 新增
                     />
                     <ContactShadows
                         position={[0, 0.1, 0]}

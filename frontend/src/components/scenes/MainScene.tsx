@@ -54,6 +54,15 @@ export interface MainSceneProps {
     altitude?: number | null
     device_name: string
   }>
+  allDevicePositions?: Map<string, {
+    position: [number, number, number]
+    deviceId: string
+    deviceName?: string  // ✅ 新增：裝置名稱
+    lat: number
+    lon: number
+    accuracy: number
+  }>
+  myDeviceId?: string | null
 }
 
 const UAV_SCALE = 10
@@ -74,6 +83,8 @@ const MainScene: React.FC<MainSceneProps> = ({
   origin,
   scale,
   usrpData = [],
+  allDevicePositions,
+  myDeviceId,
 }) => {
   const [isMouseStill, setIsMouseStill] = useState(true)
 
@@ -202,97 +213,44 @@ const MainScene: React.FC<MainSceneProps> = ({
   }, [uavPath])
 
   useEffect(() => {
-    console.log('🚁 MainScene 收到 UAV 位置:', uavPosition)
-    console.log('🚁 UAV 位置詳細:', {
-      x: uavPosition[0],
-      y: uavPosition[1],
-      z: uavPosition[2],
-    })
-    
     if (uavPosition[1] < 5) {
       console.warn('⚠️ UAV 的 Y 座標太低，可能看不到！', uavPosition[1])
     }
   }, [uavPosition])
 
   useEffect(() => {
+    if (allDevicePositions) {
+      console.log('🚁 MainScene 裝置位置更新，當前數量:', allDevicePositions.size)
+      
+      const deviceIds = Array.from(allDevicePositions.keys())
+      console.log('🚁 當前裝置列表:', deviceIds.map(id => id.substring(0, 8)))
+      
+      // ✅ 顯示裝置名稱
+      allDevicePositions.forEach((device, deviceId) => {
+        console.log(`🚁 裝置 ${deviceId.substring(0, 8)}: ${device.deviceName || 'N/A'}`)
+      })
+    }
+  }, [allDevicePositions])
+
+  useEffect(() => {
     if (photos.length > 0) {
       console.log('📸 MainScene 收到照片資料，數量:', photos.length)
-      console.log('📸 照片詳細資訊:', photos)
-      console.log('📸 origin:', origin)
-      console.log('📸 scale:', scale)
     }
-  }, [photos, origin, scale])
+  }, [photos])
 
   useEffect(() => {
     if (usrpData.length > 0) {
       console.log('📡 MainScene 收到 USRP 資料，數量:', usrpData.length)
-      console.log('📡 USRP 詳細資訊:', usrpData)
-      console.log('📡 origin:', origin)
-      console.log('📡 scale:', scale)
     }
-  }, [usrpData, origin, scale])
+  }, [usrpData])
 
   const deviceMeshes = useMemo(() => {
-    console.log('🎯 MainScene devices:', devices)
-    console.log('🎯 devices 數量:', devices.length)
-    
-    devices.forEach((d, index) => {
-      console.log(`🎯 設備 ${index}:`, {
-        id: d.id,
-        idType: typeof d.id,
-        role: d.role,
-        roleType: typeof d.role,
-        roleValue: `"${d.role}"`,
-        roleLength: d.role?.length,
-        position: [d.position_x, d.position_y, d.position_z]
-      })
-    })
-
     return devices.map((device: any) => {
-      console.log('🔍 正在處理 device:', { 
-        id: device.id, 
-        role: device.role,
-        roleMatch: device.role === 'tx-interference',
-        roleTrimMatch: String(device.role).trim() === 'tx-interference',
-        position: [device.position_x, device.position_y, device.position_z] 
-      })
-
-      const isSelected =
-        device.role === 'receiver' &&
-        device.id !== null &&
-        selectedReceiverIds.includes(device.id)
-
       if (device.role === 'receiver') {
-        const position: [number, number, number] = [
-          device.position_x,
-          device.position_y,
-          device.position_z,
-        ]
-        const shouldControl = isSelected
-
-        return (
-          <UAVFlight
-            key={
-              device.id
-                ? `uav-${device.id}`
-                : `temp-${device.position_x}-${device.position_y}-${device.position_z}`
-            }
-            position={position}
-            scale={[UAV_SCALE, UAV_SCALE, UAV_SCALE]}
-            auto={shouldControl ? auto : false}
-            manualDirection={shouldControl ? manualDirection : null}
-            onManualMoveDone={() => {
-              if (manualControl) manualControl(null)
-            }}
-            onPositionUpdate={(pos) => {
-              if (onUAVPositionUpdate && shouldControl) {
-                onUAVPositionUpdate(pos, device.id ?? undefined)
-              }
-            }}
-            uavAnimation={shouldControl ? uavAnimation : false}
-          />
-        )
-      } else if (device.role === 'desired') {
+        return null
+      }
+      
+      if (device.role === 'desired') {
         return (
           <StaticModel
             key={device.id ?? `desired-${device.position_x}-${device.position_z}`}
@@ -321,17 +279,9 @@ const MainScene: React.FC<MainSceneProps> = ({
           />
         )
       } else if (device.role === 'user') {
-        console.log('🔵 User device 已被 UAVFlight 替代，不再渲染藍色球')
         return null
       } 
       else if (device.role && String(device.role).trim() === 'tx-interference') {
-        console.log('🔴🔴🔴 找到 TX 干擾源!!!', device)
-        console.log('🔴 TX 干擾源座標:', {
-          x: device.position_x,
-          y: device.position_y,
-          z: device.position_z,
-        })
-        
         return (
           <group
             key={device.id ?? `tx-${device.position_x}-${device.position_z}`}
@@ -378,13 +328,6 @@ const MainScene: React.FC<MainSceneProps> = ({
         )
       }
       else if (device.role && String(device.role).trim() === 'rx-interference') {
-        console.log('🟢🟢🟢 找到 RX 干擾源!!!', device)
-        console.log('🟢 RX 干擾源座標:', {
-          x: device.position_x,
-          y: device.position_y,
-          z: device.position_z,
-        })
-        
         return (
           <group
             key={device.id ?? `rx-${device.position_x}-${device.position_z}`}
@@ -431,13 +374,6 @@ const MainScene: React.FC<MainSceneProps> = ({
         )
       }
       else if (device.role && String(device.role).trim() === 'baseline-point-3') {
-        console.log('🟡🟡🟡 找到基準點3!!!', device)
-        console.log('🟡 基準點3座標:', {
-          x: device.position_x,
-          y: device.position_y,
-          z: device.position_z,
-        })
-        
         return (
           <group
             key={device.id ?? `baseline-point-3-${device.position_x}-${device.position_z}`}
@@ -484,22 +420,135 @@ const MainScene: React.FC<MainSceneProps> = ({
         )
       }
       else {
-        console.log('⚪ 未知的 device role:', device.role)
         return null
       }
     })
   }, [
     devices,
-    auto,
-    manualDirection,
-    onUAVPositionUpdate,
-    manualControl,
-    uavAnimation,
-    selectedReceiverIds,
     BS_MODEL_URL,
     JAMMER_MODEL_URL,
     isMouseStill,
   ])
+
+  // ✅ 統一使用 allDevicesUAVs 渲染所有裝置的 UAV（包含裝置名稱）
+  const allDevicesUAVs = useMemo(() => {
+    if (!allDevicePositions || allDevicePositions.size === 0) {
+      console.log('⚠️ 沒有裝置位置資料，顯示預設 UAV')
+      return (
+        <Suspense key="default-uav" fallback={null}>
+          <group position={uavPosition}>
+            <UAVFlight
+              position={[0, 0, 0]}
+              scale={[10, 10, 10]}
+              auto={false}
+              uavAnimation={true}
+              onPositionUpdate={() => {}}
+            />
+
+            {isMouseStill && (
+              <Html
+                position={[0, 30, 0]}
+                center
+                sprite
+                style={{
+                  background: 'rgba(30, 30, 30, 0.95)',
+                  color: 'white',
+                  padding: '8px 12px',
+                  borderRadius: '8px',
+                  fontSize: '11px',
+                  fontWeight: 'bold',
+                  whiteSpace: 'nowrap',
+                  pointerEvents: 'none',
+                  userSelect: 'none',
+                  border: '2px solid #555',
+                  boxShadow: '0 4px 12px rgba(0, 0, 0, 0.6)',
+                  lineHeight: '1.4',
+                }}
+              >
+                🚁 UAV 預設位置
+              </Html>
+            )}
+          </group>
+        </Suspense>
+      )
+    }
+
+    console.log('🚁 準備渲染 UAV，數量:', allDevicePositions.size)
+
+    return Array.from(allDevicePositions.entries()).map(([deviceId, device]) => {
+      const isMyDevice = deviceId === myDeviceId
+      
+      // ✅ 取得裝置顯示名稱（優先使用 deviceName，否則使用 deviceId 前 8 碼）
+      const displayName = device.deviceName || deviceId.substring(0, 8)
+      
+      console.log(`🚁 渲染 UAV: ${displayName}`, {
+        deviceId: deviceId.substring(0, 8),
+        deviceName: device.deviceName,
+        isMyDevice,
+        position: device.position,
+        accuracy: device.accuracy
+      })
+      
+      return (
+        <Suspense key={deviceId} fallback={null}>
+          <group position={device.position}>
+            <UAVFlight
+              position={[0, 0, 0]}
+              scale={[10, 10, 10]}
+              auto={false}
+              uavAnimation={true}
+              onPositionUpdate={() => {}}
+            />
+
+            {isMouseStill && (
+              <Html
+                position={[0, 30, 0]}
+                center
+                sprite
+                style={{
+                  // ✅ 我的裝置：深色背景 (深灰色)
+                  // ✅ 其他裝置：淺色背景 (淺藍綠色)
+                  background: isMyDevice 
+                    ? 'rgba(30, 30, 30, 0.95)'      // 深色
+                    : 'rgba(173, 216, 230, 0.95)',  // 淺色
+                  color: isMyDevice ? 'white' : 'black',
+                  padding: '8px 12px',
+                  borderRadius: '8px',
+                  fontSize: '11px',
+                  fontWeight: 'bold',
+                  whiteSpace: 'nowrap',
+                  pointerEvents: 'none',
+                  userSelect: 'none',
+                  border: isMyDevice 
+                    ? '2px solid #555'       // 深色邊框
+                    : '2px solid #87CEEB',   // 淺色邊框
+                  boxShadow: isMyDevice 
+                    ? '0 4px 12px rgba(0, 0, 0, 0.6)' 
+                    : '0 4px 12px rgba(135, 206, 235, 0.6)',
+                  lineHeight: '1.4',
+                }}
+              >
+                {/* ✅ 修改：顯示裝置名稱而非 deviceId */}
+                <div style={{ marginBottom: '3px' }}>
+                  {isMyDevice ? '🟤 我的裝置: ' : '⚪ '}{displayName}
+                </div>
+                <div style={{ fontSize: '9px', opacity: 0.9, marginBottom: '2px' }}>
+                  📍 {device.lat.toFixed(6)}°, {device.lon.toFixed(6)}°
+                </div>
+                <div style={{ fontSize: '9px', opacity: 0.8 }}>
+                  🎯 精度: {device.accuracy.toFixed(1)}m
+                </div>
+                {/* ✅ 新增：顯示完整 deviceId（縮小字體） */}
+                <div style={{ fontSize: '8px', opacity: 0.6, marginTop: '3px' }}>
+                  ID: {deviceId.substring(0, 12)}...
+                </div>
+              </Html>
+            )}
+          </group>
+        </Suspense>
+      )
+    })
+  }, [allDevicePositions, myDeviceId, isMouseStill, uavPosition])
 
   return (
     <>
@@ -517,13 +566,9 @@ const MainScene: React.FC<MainSceneProps> = ({
 
       {origin && scale && photos.length > 0 && (
         <>
-          {console.log('📸 開始渲染 PhotoMarker，照片數量:', photos.length)}
           {photos.map((photo, index) => {
-            console.log(`📸 處理照片 ${index}:`, photo);
-            
             if (!photo.latitude || !photo.longitude) {
-              console.warn(`⚠️ 照片 ${index} 缺少 GPS 資料:`, photo);
-              return null;
+              return null
             }
 
             const [east, north, up] = latLonToENU(
@@ -537,18 +582,6 @@ const MainScene: React.FC<MainSceneProps> = ({
             const x = east * scale
             const z = north * scale
             const y = Math.max(up * scale, 10)
-
-            console.log(`📸 照片 ${index} 的 3D 座標:`, {
-              原始GPS: { 
-                lat: photo.latitude, 
-                lon: photo.longitude, 
-                alt: photo.altitude 
-              },
-              origin: origin,
-              ENU: { east, north, up },
-              scale: scale,
-              最終座標: { x, y, z }
-            });
 
             return (
               <PhotoMarker
@@ -564,21 +597,16 @@ const MainScene: React.FC<MainSceneProps> = ({
                   console.log('📸 點擊照片:', photo.url)
                 }}
               />
-            );
+            )
           })}
         </>
       )}
 
-      {/* ✅ 渲染 USRP 標記（加入經緯度傳遞） */}
       {origin && scale && usrpData.length > 0 && (
         <>
-          {console.log('📡 開始渲染 USRP 標記，數量:', usrpData.length)}
-          {usrpData.map((usrp, index) => {
-            console.log(`📡 處理 USRP ${index}:`, usrp);
-            
+          {usrpData.map((usrp) => {
             if (!usrp.latitude || !usrp.longitude) {
-              console.warn(`⚠️ USRP ${index} 缺少 GPS 資料:`, usrp);
-              return null;
+              return null
             }
 
             const [east, north, up] = latLonToENU(
@@ -593,18 +621,6 @@ const MainScene: React.FC<MainSceneProps> = ({
             const z = north * scale
             const y = Math.max(up * scale, 10)
 
-            console.log(`📡 USRP ${index} 的 3D 座標:`, {
-              原始GPS: { 
-                lat: usrp.latitude, 
-                lon: usrp.longitude, 
-                alt: usrp.altitude 
-              },
-              origin: origin,
-              ENU: { east, north, up },
-              scale: scale,
-              最終座標: { x, y, z }
-            });
-
             return (
               <USRPMarker
                 key={`usrp-${usrp.id}`}
@@ -615,54 +631,18 @@ const MainScene: React.FC<MainSceneProps> = ({
                 bandwidth={usrp.bandwidth}
                 timestamp={usrp.timestamp}
                 deviceName={usrp.device_name}
-                latitude={usrp.latitude}      // ✅ 傳遞經度
-                longitude={usrp.longitude}    // ✅ 傳遞緯度
+                latitude={usrp.latitude}
+                longitude={usrp.longitude}
                 onClick={() => {
                   console.log('📡 點擊 USRP:', usrp.device_name)
                 }}
               />
-            );
+            )
           })}
         </>
       )}
 
-      {console.log('🎯 準備渲染 UAV，位置:', uavPosition)}
-      <Suspense fallback={null}>
-        <group position={uavPosition}>
-          <UAVFlight
-            position={[0, 0, 0]}
-            scale={[10, 10, 10]}
-            auto={false}
-            uavAnimation={true}
-            onPositionUpdate={(pos) => {
-              console.log('🚁 UAV 位置回調:', pos)
-            }}
-          />
-
-          {isMouseStill && (
-            <Html
-              position={[0, 30, 0]}
-              center
-              sprite
-              style={{
-                background: 'rgba(0, 191, 255, 0.9)',
-                color: 'white',
-                padding: '5px 10px',
-                borderRadius: '5px',
-                fontSize: '12px',
-                fontWeight: 'bold',
-                whiteSpace: 'nowrap',
-                pointerEvents: 'none',
-                userSelect: 'none',
-                border: '2px solid #00BFFF',
-                boxShadow: '0 4px 12px rgba(0, 191, 255, 0.6)',
-              }}
-            >
-              🚁 UAV 目前位置
-            </Html>
-          )}
-        </group>
-      </Suspense>
+      {allDevicesUAVs}
     </>
   )
 }

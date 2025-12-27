@@ -1,4 +1,4 @@
-import { useEffect, useState } from 'react'
+import { useEffect, useState, useRef, useCallback } from 'react'
 import { useWebSocket } from './useWebSocket'
 
 interface GPSData {
@@ -8,16 +8,22 @@ interface GPSData {
   accuracy: number
   timestamp: number
   deviceType: 'mobile' | 'desktop'
+  deviceId?: string
+  deviceName?: string
 }
 
-// ✅ 清除軌跡訊息類型
+interface MultiDeviceGPSData extends GPSData {
+  deviceId: string
+  deviceName?: string
+}
+
 interface ClearPathMessage {
   type: 'clear-path'
   timestamp: number
   deviceType: 'mobile' | 'desktop'
+  deviceId?: string
 }
 
-// ✅ 照片上傳事件類型
 interface PhotoUploadEvent {
   type: 'photo-upload'
   filename: string
@@ -25,38 +31,93 @@ interface PhotoUploadEvent {
   timestamp: string
 }
 
-// ✅ 新增：照片刪除事件類型
 interface PhotoDeleteEvent {
   type: 'photo_deleted'
   filename: string
   timestamp: string
 }
 
-// ✅ 修改：返回值類型（新增照片刪除事件）
+// ✅ 修改：返回值類型（支援多裝置 + 裝置名稱）
 interface GPSSyncResult {
-  lat: number
-  lon: number
-  alt: number
-  accuracy: number
+  myDeviceId: string
+  deviceName: string
+  updateDeviceName: (newName: string) => void
+  allDevices: Map<string, MultiDeviceGPSData>
+  myGPS: { lat: number; lon: number; alt: number; accuracy: number }
   clearPathTrigger: number
   sendClearPath: () => void
   photoUploadEvent: PhotoUploadEvent | null
-  photoDeleteEvent: PhotoDeleteEvent | null  // ✅ 新增：照片刪除事件
+  photoDeleteEvent: PhotoDeleteEvent | null
+}
+
+// ✅ 新增：生成穩定的裝置 ID（基於瀏覽器指紋 + localStorage）
+function getStableDeviceId(): string {
+  // 1️⃣ 先檢查 localStorage 是否已有 ID
+  const storedId = localStorage.getItem('sim-world-device-id')
+  if (storedId) {
+    console.log('📱 使用已儲存的裝置 ID:', storedId.substring(0, 12))
+    return storedId
+  }
+
+  // 2️⃣ 生成基於瀏覽器指紋的 ID
+  const fingerprint = [
+    navigator.userAgent,
+    navigator.language,
+    screen.width,
+    screen.height,
+    new Date().getTimezoneOffset(),
+    navigator.hardwareConcurrency || 0,
+    navigator.platform
+  ].join('|')
+
+  // 3️⃣ 簡單 hash 函數
+  let hash = 0
+  for (let i = 0; i < fingerprint.length; i++) {
+    const char = fingerprint.charCodeAt(i)
+    hash = ((hash << 5) - hash) + char
+    hash = hash & hash
+  }
+
+  // 4️⃣ 生成 UUID 格式的 ID
+  const uuid = `device-${Math.abs(hash).toString(16)}-${Date.now().toString(16)}`
+  
+  // 5️⃣ 儲存到 localStorage
+  localStorage.setItem('sim-world-device-id', uuid)
+  console.log('✅ 生成新的裝置 ID:', uuid.substring(0, 20))
+  
+  return uuid
+}
+
+// ✅ 新增：取得或設定裝置顯示名稱
+function getDeviceDisplayName(): string {
+  const storedName = localStorage.getItem('sim-world-device-name')
+  if (storedName) {
+    return storedName
+  }
+  
+  // 預設名稱：裝置類型 + 隨機數字
+  const isMobile = /iPhone|iPad|iPod|Android/i.test(navigator.userAgent)
+  const defaultName = `${isMobile ? '📱 手機' : '💻 筆電'}_${Math.floor(Math.random() * 1000)}`
+  
+  localStorage.setItem('sim-world-device-name', defaultName)
+  return defaultName
 }
 
 export function useGPSSync(localGPS: { lat: number; lon: number; alt: number; accuracy: number }): GPSSyncResult {
-  const [syncedGPS, setSyncedGPS] = useState({
-    ...localGPS,
-    accuracy: 999
-  })
+  // ✅ 使用穩定的裝置 ID（不會變）
+  const [myDeviceId] = useState<string>(getStableDeviceId())
+  const [deviceName, setDeviceName] = useState<string>(getDeviceDisplayName())
   
+  const [allDevices, setAllDevices] = useState<Map<string, MultiDeviceGPSData>>(new Map())
   const [clearPathTrigger, setClearPathTrigger] = useState<number>(0)
   const [photoUploadEvent, setPhotoUploadEvent] = useState<PhotoUploadEvent | null>(null)
-  
-  // ✅ 新增：照片刪除事件狀態
   const [photoDeleteEvent, setPhotoDeleteEvent] = useState<PhotoDeleteEvent | null>(null)
   
   const isMobile = /iPhone|iPad|iPod|Android/i.test(navigator.userAgent)
+  
+  // ✅ 新增：防止重複發送的 ref
+  const lastSentGPSRef = useRef<string>('')
+  const sendIntervalRef = useRef<NodeJS.Timeout | null>(null)
 
   const { isConnected, sendMessage, connectionStatus } = useWebSocket({
     url: 'wss://backend.simworld.website/ws/gps',
@@ -66,26 +127,74 @@ export function useGPSSync(localGPS: { lat: number; lon: number; alt: number; ac
     
     onConnect: () => {
       console.log('✅ GPS WebSocket 連接成功')
-      console.log(`📱 設備類型: ${isMobile ? '手機' : '筆電'}`)
+      console.log(`📱 裝置 ID: ${myDeviceId.substring(0, 20)}`)
+      console.log(`📝 顯示名稱: ${deviceName}`)
+      console.log(`🖥️ 設備類型: ${isMobile ? '手機' : '筆電'}`)
       
-      if (isMobile && localGPS.lat !== 0 && localGPS.lon !== 0) {
-        const data: GPSData = {
-          ...localGPS,
-          accuracy: localGPS.accuracy,
-          timestamp: Date.now(),
-          deviceType: 'mobile'
-        }
-        sendMessage(data)
-        console.log('📤 [手機] 初次發送 GPS:', data)
-      }
+      // ✅ 連線後立即發送自己的 deviceId 給後端
+      sendMessage({
+        type: 'register-device',
+        deviceId: myDeviceId,
+        deviceName: deviceName,
+        deviceType: isMobile ? 'mobile' : 'desktop'
+      })
     },
     
     onMessage: (event) => {
       try {
         const data = event.data
-        console.log('📥 收到遠端訊息原始資料:', data)
         
-        // ✅ 新增：處理照片刪除事件
+        // ✅ 後端確認註冊
+        if (data.type === 'device-registered') {
+          console.log('✅ 後端已確認裝置註冊:', data.deviceId.substring(0, 12))
+          return
+        }
+        
+        // ✅ 處理裝置名稱更新（其他人更新名稱時同步）
+        if (data.type === 'device-name-updated') {
+          console.log('📝 收到裝置名稱更新:', {
+            deviceId: data.deviceId.substring(0, 8),
+            newName: data.deviceName
+          })
+          
+          setAllDevices(prev => {
+            const newMap = new Map(prev)
+            const device = newMap.get(data.deviceId)
+            
+            if (device) {
+              device.deviceName = data.deviceName
+              newMap.set(data.deviceId, device)
+            }
+            
+            return newMap
+          })
+          
+          return
+        }
+        
+        // ✅ 處理裝置斷線事件
+        if (data.type === 'device-disconnected') {
+          const disconnectedDeviceId = data.deviceId
+          console.log('📡 收到裝置斷線事件:', disconnectedDeviceId.substring(0, 8))
+          
+          setAllDevices(prev => {
+            const newMap = new Map(prev)
+            const deleted = newMap.delete(disconnectedDeviceId)
+            
+            if (deleted) {
+              console.log(`✅ 已移除斷線裝置 ${disconnectedDeviceId.substring(0, 8)}，剩餘裝置數: ${newMap.size}`)
+              console.log('📊 剩餘裝置列表:', Array.from(newMap.keys()).map(id => id.substring(0, 8)))
+            } else {
+              console.log(`⚠️ 嘗試移除不存在的裝置: ${disconnectedDeviceId.substring(0, 8)}`)
+            }
+            
+            return newMap
+          })
+          
+          return
+        }
+        
+        // ✅ 處理照片刪除事件
         if (data && data.type === 'photo_deleted') {
           console.log('🗑️ 收到照片刪除事件:', {
             filename: data.filename,
@@ -97,8 +206,6 @@ export function useGPSSync(localGPS: { lat: number; lon: number; alt: number; ac
             filename: data.filename,
             timestamp: data.timestamp
           })
-          
-          console.log('✅ 照片刪除事件已更新狀態')
           return
         }
         
@@ -116,68 +223,59 @@ export function useGPSSync(localGPS: { lat: number; lon: number; alt: number; ac
             url: data.url,
             timestamp: data.timestamp
           })
-          
-          console.log('✅ 照片上傳事件已更新狀態')
           return
         }
         
         // ✅ 處理清除軌跡訊息
         if (data && data.type === 'clear-path') {
-          console.log('🗑️ 收到清除軌跡指令:', {
+          if (data.deviceId === myDeviceId) {
+            console.log('⏭️ 忽略自己的清除軌跡指令')
+            return
+          }
+          
+          console.log('🗑️ 收到其他裝置的清除軌跡指令:', {
             from: data.deviceType,
-            to: isMobile ? '手機' : '筆電',
+            deviceId: data.deviceId?.substring(0, 8),
             timestamp: new Date(data.timestamp).toLocaleTimeString()
           })
           
-          setClearPathTrigger(prev => {
-            const newValue = prev + 1
-            console.log(`🗑️ 清除軌跡觸發器更新: ${prev} -> ${newValue}`)
-            return newValue
-          })
+          setClearPathTrigger(prev => prev + 1)
           return
         }
         
-        // ✅ 驗證 GPS 資料格式
-        if (!data || typeof data !== 'object') {
-          console.error('❌ 收到的資料格式不正確:', data)
-          return
-        }
-        
-        if (typeof data.lat !== 'number' || typeof data.lon !== 'number') {
-          console.error('❌ GPS 座標資料不正確:', data)
-          return
-        }
-        
-        console.log('📥 解析後的 GPS 資料:', {
-          lat: data.lat,
-          lon: data.lon,
-          alt: data.alt,
-          accuracy: data.accuracy,
-          deviceType: data.deviceType,
-          isMobile: isMobile
-        })
-        
-        if (!isMobile && data.deviceType === 'mobile') {
-          console.log('💻 [筆電] 準備更新 GPS...')
-          setSyncedGPS({
-            lat: data.lat,
-            lon: data.lon,
-            alt: data.alt,
-            accuracy: data.accuracy ?? 999
-          })
-          console.log('💻 [筆電] 已更新手機 GPS:', {
+        // ✅ 處理 GPS 資料（包含自己的 GPS + 裝置名稱）
+        if (data && data.deviceId && typeof data.lat === 'number' && typeof data.lon === 'number') {
+          console.log('📍 收到 GPS 資料:', {
+            deviceId: data.deviceId.substring(0, 8),
+            deviceName: data.deviceName || 'N/A',
+            isMyDevice: data.deviceId === myDeviceId,
             lat: data.lat.toFixed(6),
             lon: data.lon.toFixed(6),
-            alt: data.alt.toFixed(2),
-            accuracy: `${(data.accuracy ?? 999).toFixed(2)}m`
+            accuracy: data.accuracy?.toFixed(2) || 'N/A'
           })
-        } else if (isMobile && data.deviceType === 'mobile') {
-          console.log('📱 [手機] 收到自己發送的 GPS，忽略')
-        } else {
-          console.log('ℹ️ 其他情況，裝置類型:', isMobile ? '手機' : '筆電', '資料類型:', data.deviceType)
+          
+          setAllDevices(prev => {
+            const newMap = new Map(prev)
+            newMap.set(data.deviceId, {
+              lat: data.lat,
+              lon: data.lon,
+              alt: data.alt ?? 0,
+              accuracy: data.accuracy ?? 999,
+              timestamp: data.timestamp ?? Date.now(),
+              deviceType: data.deviceType ?? 'mobile',
+              deviceId: data.deviceId,
+              deviceName: data.deviceName || 'Unknown Device' // ✅ 儲存裝置名稱
+            })
+            
+            console.log(`📱 更新後裝置總數: ${newMap.size}`)
+            return newMap
+          })
+          return
         }
+        
+        console.log('ℹ️ 未處理的訊息類型:', data)
       } catch (error) {
-        console.error('❌ 解析訊息失敗:', error, '原始資料:', event)
+        console.error('❌ 解析訊息失敗:', error)
       }
     },
     
@@ -187,18 +285,25 @@ export function useGPSSync(localGPS: { lat: number; lon: number; alt: number; ac
     
     onDisconnect: () => {
       console.log('📡 GPS WebSocket 已關閉')
+      
+      // ✅ 清理定時器
+      if (sendIntervalRef.current) {
+        clearInterval(sendIntervalRef.current)
+        sendIntervalRef.current = null
+        console.log('🛑 已停止 GPS 定期發送')
+      }
+      
+      console.log('⚠️ WebSocket 斷線，保留現有裝置資料等待重連')
     }
   })
 
+  // ✅ 修改：手機定期發送 GPS（使用 setInterval + 帶上 deviceName）
   useEffect(() => {
-    console.log('🔍 檢查是否需要發送 GPS:', {
-      isMobile,
-      isConnected,
-      hasGPS: localGPS.lat !== 0 && localGPS.lon !== 0,
-      lat: localGPS.lat,
-      lon: localGPS.lon,
-      accuracy: localGPS.accuracy
-    })
+    // ✅ 清理舊的定時器
+    if (sendIntervalRef.current) {
+      clearInterval(sendIntervalRef.current)
+      sendIntervalRef.current = null
+    }
 
     if (!isMobile) {
       console.log('💻 筆電不發送 GPS，只接收')
@@ -215,31 +320,85 @@ export function useGPSSync(localGPS: { lat: number; lon: number; alt: number; ac
       return
     }
 
-    const data: GPSData = {
-      ...localGPS,
-      accuracy: localGPS.accuracy,
-      timestamp: Date.now(),
-      deviceType: 'mobile'
+    // ✅ 立即發送一次
+    const sendGPS = () => {
+      const gpsKey = `${localGPS.lat.toFixed(6)},${localGPS.lon.toFixed(6)},${localGPS.alt.toFixed(2)}`
+      
+      // ✅ 防止重複發送相同座標
+      if (lastSentGPSRef.current === gpsKey) {
+        console.log('⏭️ GPS 座標未變化，跳過發送')
+        return
+      }
+      
+      const data: GPSData = {
+        ...localGPS,
+        accuracy: localGPS.accuracy,
+        timestamp: Date.now(),
+        deviceType: 'mobile',
+        deviceId: myDeviceId,
+        deviceName: deviceName // ✅ 發送裝置名稱
+      }
+      
+      console.log('📤 [手機] 發送 GPS:', {
+        deviceId: myDeviceId.substring(0, 8),
+        deviceName: deviceName,
+        lat: data.lat.toFixed(6),
+        lon: data.lon.toFixed(6),
+        accuracy: data.accuracy.toFixed(2)
+      })
+      
+      sendMessage(data)
+      lastSentGPSRef.current = gpsKey
     }
-    
-    console.log('📤 [手機] 準備發送 GPS:', data)
-    sendMessage(data)
-    console.log('📤 [手機] GPS 已發送 (精度: ' + data.accuracy.toFixed(2) + 'm)')
-  }, [localGPS.lat, localGPS.lon, localGPS.alt, localGPS.accuracy, isMobile, isConnected, sendMessage])
+
+    // ✅ 立即發送一次
+    sendGPS()
+
+    // ✅ 每 1 秒發送一次（節流）
+    sendIntervalRef.current = setInterval(sendGPS, 1000)
+    console.log('⏰ 已啟動 GPS 定期發送（每 1 秒）')
+
+    // ✅ 清理函數
+    return () => {
+      if (sendIntervalRef.current) {
+        clearInterval(sendIntervalRef.current)
+        sendIntervalRef.current = null
+        console.log('🛑 已停止 GPS 定期發送')
+      }
+    }
+  }, [
+    localGPS.lat, 
+    localGPS.lon, 
+    localGPS.alt, 
+    localGPS.accuracy, 
+    isMobile, 
+    isConnected, 
+    myDeviceId,
+    deviceName, // ✅ 新增：監聽 deviceName 變化
+    sendMessage
+  ])
 
   useEffect(() => {
     console.log(`🔌 GPS WebSocket 狀態: ${connectionStatus}`)
   }, [connectionStatus])
 
   useEffect(() => {
-    console.log('🔄 syncedGPS 已更新:', {
-      lat: syncedGPS.lat,
-      lon: syncedGPS.lon,
-      alt: syncedGPS.alt,
-      accuracy: syncedGPS.accuracy,
-      isMobile
-    })
-  }, [syncedGPS, isMobile])
+    if (allDevices.size > 0) {
+      console.log('🔄 allDevices 已更新:', {
+        deviceCount: allDevices.size,
+        devices: Array.from(allDevices.entries()).map(([id, device]) => ({
+          id: id.substring(0, 8),
+          name: device.deviceName || 'N/A',
+          lat: device.lat.toFixed(6),
+          lon: device.lon.toFixed(6),
+          accuracy: device.accuracy.toFixed(2),
+          isMe: id === myDeviceId
+        }))
+      })
+    } else {
+      console.log('📭 allDevices 已清空或尚無資料')
+    }
+  }, [allDevices, myDeviceId])
 
   const sendClearPath = () => {
     if (!isConnected) {
@@ -250,39 +409,44 @@ export function useGPSSync(localGPS: { lat: number; lon: number; alt: number; ac
     const message: ClearPathMessage = {
       type: 'clear-path',
       timestamp: Date.now(),
-      deviceType: isMobile ? 'mobile' : 'desktop'
+      deviceType: isMobile ? 'mobile' : 'desktop',
+      deviceId: myDeviceId
     }
 
     console.log('📤 發送清除軌跡指令:', {
       from: isMobile ? '手機' : '筆電',
+      deviceId: myDeviceId.substring(0, 8),
       timestamp: new Date(message.timestamp).toLocaleTimeString()
     })
 
     sendMessage(message)
-    console.log('✅ 清除軌跡指令已發送')
   }
 
-  const gpsData = isMobile ? localGPS : syncedGPS
-  
-  console.log('📍 useGPSSync 返回:', {
-    isMobile,
-    gps: {
-      lat: gpsData.lat,
-      lon: gpsData.lon,
-      alt: gpsData.alt,
-      accuracy: gpsData.accuracy
-    },
-    clearPathTrigger,
-    photoUploadEvent: photoUploadEvent ? '有照片事件' : '無照片事件',
-    photoDeleteEvent: photoDeleteEvent ? '有刪除事件' : '無刪除事件'  // ✅ 新增日誌
-  })
-  
-  // ✅ 修改：返回 GPS 資料 + 清除軌跡功能 + 照片上傳事件 + 照片刪除事件
+  // ✅ 新增：提供修改裝置名稱的函數
+  const updateDeviceName = useCallback((newName: string) => {
+    setDeviceName(newName)
+    localStorage.setItem('sim-world-device-name', newName)
+    console.log('✅ 已更新裝置名稱:', newName)
+    
+    // 立即發送更新給後端
+    if (isConnected) {
+      sendMessage({
+        type: 'update-device-name',
+        deviceId: myDeviceId,
+        deviceName: newName
+      })
+    }
+  }, [isConnected, sendMessage, myDeviceId])
+
   return {
-    ...gpsData,
+    myDeviceId,
+    deviceName,              // ✅ 新增：返回裝置名稱
+    updateDeviceName,        // ✅ 新增：返回修改函數
+    allDevices,
+    myGPS: localGPS,
     clearPathTrigger,
     sendClearPath,
     photoUploadEvent,
-    photoDeleteEvent  // ✅ 新增：返回照片刪除事件
+    photoDeleteEvent
   }
 }
