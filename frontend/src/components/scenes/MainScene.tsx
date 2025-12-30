@@ -18,6 +18,16 @@ import PhotoMarker from '../PhotoMarker'
 import USRPMarker from '../USRPMarker'
 import { latLonToENU } from '../../utils/geo'
 
+// 🎨 簡易 Hash 函式：根據字串產生固定的顏色索引
+const getHashColor = (str: string, colors: string[]) => {
+  let hash = 0
+  for (let i = 0; i < str.length; i++) {
+    hash = str.charCodeAt(i) + ((hash << 5) - hash)
+  }
+  const index = Math.abs(hash) % colors.length
+  return colors[index]
+}
+
 export interface MainSceneProps {
   devices: any[]
   auto: boolean
@@ -57,15 +67,16 @@ export interface MainSceneProps {
   allDevicePositions?: Map<string, {
     position: [number, number, number]
     deviceId: string
-    deviceName?: string  // ✅ 新增：裝置名稱
+    deviceName?: string
     lat: number
     lon: number
     accuracy: number
   }>
   myDeviceId?: string | null
+  // ✅ 新增這兩個 props
+  devicePaths?: Map<string, Array<{ x: number; y: number; z: number }>>
+  deviceColors?: string[]
 }
-
-const UAV_SCALE = 10
 
 const MainScene: React.FC<MainSceneProps> = ({
   devices = [],
@@ -77,7 +88,7 @@ const MainScene: React.FC<MainSceneProps> = ({
   selectedReceiverIds = [],
   satellites = [],
   sceneName,
-  uavPath = [],
+  uavPath = [], // 這是單機模式用的，為了相容性保留
   uavPosition = [0, 10, 0],
   photos = [],
   origin,
@@ -85,6 +96,9 @@ const MainScene: React.FC<MainSceneProps> = ({
   usrpData = [],
   allDevicePositions,
   myDeviceId,
+  // ✅ 預設顏色庫
+  devicePaths,
+  deviceColors = ['#00ff00', '#ff0000', '#0000ff', '#ffff00', '#00ffff'],
 }) => {
   const [isMouseStill, setIsMouseStill] = useState(true)
 
@@ -206,49 +220,9 @@ const MainScene: React.FC<MainSceneProps> = ({
     return root
   }, [mainScene, SATELLITE_TEXTURE_URL])
 
-  useEffect(() => {
-    if (uavPath && uavPath.length > 0) {
-      console.log('📍 MainScene 收到軌跡資料，點數:', uavPath.length)
-    }
-  }, [uavPath])
-
-  useEffect(() => {
-    if (uavPosition[1] < 5) {
-      console.warn('⚠️ UAV 的 Y 座標太低，可能看不到！', uavPosition[1])
-    }
-  }, [uavPosition])
-
-  useEffect(() => {
-    if (allDevicePositions) {
-      console.log('🚁 MainScene 裝置位置更新，當前數量:', allDevicePositions.size)
-      
-      const deviceIds = Array.from(allDevicePositions.keys())
-      console.log('🚁 當前裝置列表:', deviceIds.map(id => id.substring(0, 8)))
-      
-      // ✅ 顯示裝置名稱
-      allDevicePositions.forEach((device, deviceId) => {
-        console.log(`🚁 裝置 ${deviceId.substring(0, 8)}: ${device.deviceName || 'N/A'}`)
-      })
-    }
-  }, [allDevicePositions])
-
-  useEffect(() => {
-    if (photos.length > 0) {
-      console.log('📸 MainScene 收到照片資料，數量:', photos.length)
-    }
-  }, [photos])
-
-  useEffect(() => {
-    if (usrpData.length > 0) {
-      console.log('📡 MainScene 收到 USRP 資料，數量:', usrpData.length)
-    }
-  }, [usrpData])
-
   const deviceMeshes = useMemo(() => {
     return devices.map((device: any) => {
-      if (device.role === 'receiver') {
-        return null
-      }
+      if (device.role === 'receiver') return null
       
       if (device.role === 'desired') {
         return (
@@ -278,10 +252,7 @@ const MainScene: React.FC<MainSceneProps> = ({
             pivotOffset={[0, -8970, 0]}
           />
         )
-      } else if (device.role === 'user') {
-        return null
-      } 
-      else if (device.role && String(device.role).trim() === 'tx-interference') {
+      } else if (device.role && String(device.role).trim() === 'tx-interference') {
         return (
           <group
             key={device.id ?? `tx-${device.position_x}-${device.position_z}`}
@@ -301,7 +272,6 @@ const MainScene: React.FC<MainSceneProps> = ({
                 transparent={false}
               />
             </mesh>
-
             {isMouseStill && (
               <Html
                 position={[0, 50, 0]}
@@ -347,7 +317,6 @@ const MainScene: React.FC<MainSceneProps> = ({
                 transparent={false}
               />
             </mesh>
-
             {isMouseStill && (
               <Html
                 position={[0, 50, 0]}
@@ -393,7 +362,6 @@ const MainScene: React.FC<MainSceneProps> = ({
                 transparent={false}
               />
             </mesh>
-
             {isMouseStill && (
               <Html
                 position={[0, 50, 0]}
@@ -419,78 +387,39 @@ const MainScene: React.FC<MainSceneProps> = ({
           </group>
         )
       }
-      else {
-        return null
-      }
+      return null
     })
-  }, [
-    devices,
-    BS_MODEL_URL,
-    JAMMER_MODEL_URL,
-    isMouseStill,
-  ])
+  }, [devices, BS_MODEL_URL, JAMMER_MODEL_URL, isMouseStill])
 
-  // ✅ 統一使用 allDevicesUAVs 渲染所有裝置的 UAV（包含裝置名稱）
+  // --- 💡 關鍵修正：統一所有裝置的渲染邏輯 (包含手機自己) ---
   const allDevicesUAVs = useMemo(() => {
-    if (!allDevicePositions || allDevicePositions.size === 0) {
-      console.log('⚠️ 沒有裝置位置資料，顯示預設 UAV')
-      return (
-        <Suspense key="default-uav" fallback={null}>
-          <group position={uavPosition}>
-            <UAVFlight
-              position={[0, 0, 0]}
-              scale={[10, 10, 10]}
-              auto={false}
-              uavAnimation={true}
-              onPositionUpdate={() => {}}
-            />
+    let devicesToRender: any[] = []
 
-            {isMouseStill && (
-              <Html
-                position={[0, 30, 0]}
-                center
-                sprite
-                style={{
-                  background: 'rgba(30, 30, 30, 0.95)',
-                  color: 'white',
-                  padding: '8px 12px',
-                  borderRadius: '8px',
-                  fontSize: '11px',
-                  fontWeight: 'bold',
-                  whiteSpace: 'nowrap',
-                  pointerEvents: 'none',
-                  userSelect: 'none',
-                  border: '2px solid #555',
-                  boxShadow: '0 4px 12px rgba(0, 0, 0, 0.6)',
-                  lineHeight: '1.4',
-                }}
-              >
-                🚁 UAV 預設位置
-              </Html>
-            )}
-          </group>
-        </Suspense>
-      )
+    // 1. 如果有外部裝置 (從 UserLocation 傳來)，優先使用
+    if (allDevicePositions && allDevicePositions.size > 0) {
+      devicesToRender = Array.from(allDevicePositions.entries()).map(([id, device]) => ({
+        ...device,
+        id,
+        isMe: id === myDeviceId
+      }))
+    } else {
+      // 2. 如果暫時沒有裝置清單，使用 props 傳進來的 uavPosition 渲染「自己」
+      devicesToRender = [{
+        id: myDeviceId || 'self',
+        position: uavPosition,
+        deviceName: '我的裝置', 
+        lat: 0,
+        lon: 0,
+        accuracy: 0,
+        isMe: true
+      }]
     }
 
-    console.log('🚁 準備渲染 UAV，數量:', allDevicePositions.size)
-
-    return Array.from(allDevicePositions.entries()).map(([deviceId, device]) => {
-      const isMyDevice = deviceId === myDeviceId
-      
-      // ✅ 取得裝置顯示名稱（優先使用 deviceName，否則使用 deviceId 前 8 碼）
-      const displayName = device.deviceName || deviceId.substring(0, 8)
-      
-      console.log(`🚁 渲染 UAV: ${displayName}`, {
-        deviceId: deviceId.substring(0, 8),
-        deviceName: device.deviceName,
-        isMyDevice,
-        position: device.position,
-        accuracy: device.accuracy
-      })
+    return devicesToRender.map((device) => {
+      const displayName = device.deviceName || device.id.substring(0, 8)
       
       return (
-        <Suspense key={deviceId} fallback={null}>
+        <Suspense key={device.id} fallback={null}>
           <group position={device.position}>
             <UAVFlight
               position={[0, 0, 0]}
@@ -506,12 +435,10 @@ const MainScene: React.FC<MainSceneProps> = ({
                 center
                 sprite
                 style={{
-                  // ✅ 我的裝置：深色背景 (深灰色)
-                  // ✅ 其他裝置：淺色背景 (淺藍綠色)
-                  background: isMyDevice 
-                    ? 'rgba(30, 30, 30, 0.95)'      // 深色
-                    : 'rgba(173, 216, 230, 0.95)',  // 淺色
-                  color: isMyDevice ? 'white' : 'black',
+                  background: device.isMe 
+                    ? 'rgba(30, 30, 30, 0.95)'      
+                    : 'rgba(173, 216, 230, 0.95)',  
+                  color: device.isMe ? 'white' : 'black',
                   padding: '8px 12px',
                   borderRadius: '8px',
                   fontSize: '11px',
@@ -519,28 +446,30 @@ const MainScene: React.FC<MainSceneProps> = ({
                   whiteSpace: 'nowrap',
                   pointerEvents: 'none',
                   userSelect: 'none',
-                  border: isMyDevice 
-                    ? '2px solid #555'       // 深色邊框
-                    : '2px solid #87CEEB',   // 淺色邊框
-                  boxShadow: isMyDevice 
+                  border: device.isMe 
+                    ? '2px solid #555' 
+                    : '2px solid #87CEEB',
+                  boxShadow: device.isMe 
                     ? '0 4px 12px rgba(0, 0, 0, 0.6)' 
                     : '0 4px 12px rgba(135, 206, 235, 0.6)',
                   lineHeight: '1.4',
                 }}
               >
-                {/* ✅ 修改：顯示裝置名稱而非 deviceId */}
                 <div style={{ marginBottom: '3px' }}>
-                  {isMyDevice ? '🟤 我的裝置: ' : '⚪ '}{displayName}
+                  {device.isMe ? '🟤 我的裝置: ' : '⚪ '}{displayName}
                 </div>
-                <div style={{ fontSize: '9px', opacity: 0.9, marginBottom: '2px' }}>
-                  📍 {device.lat.toFixed(6)}°, {device.lon.toFixed(6)}°
-                </div>
-                <div style={{ fontSize: '9px', opacity: 0.8 }}>
-                  🎯 精度: {device.accuracy.toFixed(1)}m
-                </div>
-                {/* ✅ 新增：顯示完整 deviceId（縮小字體） */}
+                {device.lat !== 0 && (
+                  <>
+                    <div style={{ fontSize: '9px', opacity: 0.9, marginBottom: '2px' }}>
+                      📍 {device.lat.toFixed(6)}°, {device.lon.toFixed(6)}°
+                    </div>
+                    <div style={{ fontSize: '9px', opacity: 0.8 }}>
+                      🎯 精度: {device.accuracy.toFixed(1)}m
+                    </div>
+                  </>
+                )}
                 <div style={{ fontSize: '8px', opacity: 0.6, marginTop: '3px' }}>
-                  ID: {deviceId.substring(0, 12)}...
+                  ID: {device.id.substring(0, 12)}...
                 </div>
               </Html>
             )}
@@ -556,7 +485,10 @@ const MainScene: React.FC<MainSceneProps> = ({
       {deviceMeshes}
       <SatelliteManager satellites={satellites} />
       
-      {uavPath && uavPath.length > 1 && (
+      {/* 1. 單機模式的軌跡 (uavPath) 
+          如果你只連一台裝置且沒有用 devicePaths，會顯示這條 
+      */}
+      {uavPath && uavPath.length > 1 && !devicePaths && (
         <UAVPath 
           path={uavPath} 
           color="#00ff00" 
@@ -564,12 +496,29 @@ const MainScene: React.FC<MainSceneProps> = ({
         />
       )}
 
+      {/* 2. ✅ 多機模式的彩色軌跡 (devicePaths)
+          遍歷所有裝置的軌跡並渲染 
+      */}
+      {devicePaths && Array.from(devicePaths.entries()).map(([deviceId, path]) => {
+        if (path.length < 2) return null
+        
+        // 根據 Device ID 取得固定顏色
+        const pathColor = getHashColor(deviceId, deviceColors)
+        
+        return (
+          <UAVPath 
+            key={`path-${deviceId}`} 
+            path={path} 
+            color={pathColor} 
+            lineWidth={3} 
+          />
+        )
+      })}
+
       {origin && scale && photos.length > 0 && (
         <>
           {photos.map((photo, index) => {
-            if (!photo.latitude || !photo.longitude) {
-              return null
-            }
+            if (!photo.latitude || !photo.longitude) return null
 
             const [east, north, up] = latLonToENU(
               photo.latitude,
@@ -605,9 +554,7 @@ const MainScene: React.FC<MainSceneProps> = ({
       {origin && scale && usrpData.length > 0 && (
         <>
           {usrpData.map((usrp) => {
-            if (!usrp.latitude || !usrp.longitude) {
-              return null
-            }
+            if (!usrp.latitude || !usrp.longitude) return null
 
             const [east, north, up] = latLonToENU(
               usrp.latitude,
@@ -642,6 +589,7 @@ const MainScene: React.FC<MainSceneProps> = ({
         </>
       )}
 
+      {/* 渲染所有裝置模型 (UAVs) */}
       {allDevicesUAVs}
     </>
   )

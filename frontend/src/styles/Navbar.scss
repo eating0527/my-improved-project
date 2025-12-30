@@ -225,6 +225,180 @@
   }
 }
 
+/* ✅ 修正：裝置選擇器樣式（完全禁用 hover，只允許點擊） */
+.navbar-item.device-selector {
+  position: relative;
+  
+  .dropdown-trigger {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    padding: 0;
+    cursor: pointer;
+    user-select: none;
+    transition: color 0.2s ease;
+    
+    &:hover {
+      color: #4a7bff;
+    }
+    
+    .device-icon {
+      font-size: 16px;
+    }
+    
+    .dropdown-arrow-small {
+      margin-left: 4px;
+      font-size: 10px;
+      transition: transform 0.2s ease;
+    }
+  }
+  
+  /* ✅ 完全禁用 hover 效果（PC 端） */
+  &:hover .device-dropdown {
+    /* 不做任何操作，讓 dropdown 保持原狀 */
+  }
+}
+
+/* ✅ 優化：裝置下拉選單樣式（初始隱藏，點擊才顯示） */
+.device-dropdown {
+  position: absolute;
+  top: 100%;
+  left: 50%;
+  transform: translateX(-50%) translateY(-10px); /* ✅ 初始向上偏移 */
+  background: linear-gradient(135deg, rgba(20, 20, 30, 0.98) 0%, rgba(40, 40, 60, 0.98) 100%);
+  border-radius: 0 0 8px 8px;
+  box-shadow: 0 8px 32px rgba(0, 0, 0, 0.8);
+  min-width: 280px;
+  max-height: 400px;
+  overflow-y: auto;
+  /* ✅ 初始狀態：完全隱藏 */
+  opacity: 0;
+  visibility: hidden;
+  pointer-events: none; /* ✅ 隱藏時不可點擊 */
+  /* ✅ 平滑過渡動畫 */
+  transition: opacity 0.3s cubic-bezier(0.4, 0, 0.2, 1), 
+              visibility 0.3s cubic-bezier(0.4, 0, 0.2, 1), 
+              transform 0.3s cubic-bezier(0.4, 0, 0.2, 1);
+  z-index: 2001; /* ✅ 確保高於其他 dropdown */
+  border: 1px solid rgba(100, 149, 237, 0.3);
+  backdrop-filter: blur(10px);
+  margin-top: 0;
+
+  /* ✅ 顯示狀態（點擊後） */
+  &.show {
+    opacity: 1;
+    visibility: visible;
+    pointer-events: auto; /* ✅ 顯示時可點擊 */
+    transform: translateX(-50%) translateY(0); /* ✅ 移動到正確位置 */
+  }
+
+  /* 自定義滾動條 */
+  &::-webkit-scrollbar {
+    width: 6px;
+  }
+
+  &::-webkit-scrollbar-track {
+    background: rgba(0, 0, 0, 0.2);
+    border-radius: 3px;
+  }
+
+  &::-webkit-scrollbar-thumb {
+    background: rgba(100, 149, 237, 0.5);
+    border-radius: 3px;
+    
+    &:hover {
+      background: rgba(100, 149, 237, 0.7);
+    }
+  }
+}
+
+/* ✅ 優化：裝置選項樣式 */
+.device-dropdown-item {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  padding: 12px 16px;
+  cursor: pointer;
+  transition: all 0.2s ease;
+  border-bottom: 1px solid rgba(255, 255, 255, 0.05);
+  /* ✅ 防止文字選擇 */
+  user-select: none;
+  
+  &:last-child {
+    border-bottom: none;
+  }
+
+  &:hover {
+    background: rgba(100, 149, 237, 0.15);
+  }
+
+  /* ✅ 選中狀態樣式 */
+  &.active {
+    background: rgba(100, 149, 237, 0.25);
+    border-left: 3px solid #6495ED;
+    
+    .device-item-name {
+      color: #93C5FD;
+      font-weight: 600;
+    }
+  }
+
+  .device-item-icon {
+    font-size: 16px;
+    flex-shrink: 0;
+  }
+
+  .device-item-name {
+    flex: 1;
+    color: #E0E7FF;
+    font-size: 13px;
+    font-weight: 500;
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
+  }
+
+  .device-item-accuracy {
+    color: #94A3B8;
+    font-size: 11px;
+    font-family: monospace;
+    background: rgba(0, 0, 0, 0.3);
+    padding: 2px 8px;
+    border-radius: 4px;
+    flex-shrink: 0;
+  }
+}
+
+/* ✅ 新增：等待裝置連線的提示樣式 */
+.device-dropdown-empty {
+  padding: 20px 16px;
+  text-align: center;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 12px;
+  
+  .empty-icon {
+    font-size: 32px;
+    animation: rotate 2s linear infinite;
+  }
+  
+  .empty-text {
+    font-size: 14px;
+    color: #94A3B8;
+    font-weight: 500;
+  }
+}
+
+@keyframes rotate {
+  from {
+    transform: rotate(0deg);
+  }
+  to {
+    transform: rotate(360deg);
+  }
+}
+
 .navbar-menu-toggle {
   display: none;
   cursor: pointer;
@@ -357,6 +531,60 @@
     display: block !important;
     opacity: 1 !important;
     visibility: visible !important;
+  }
+
+  /* ✅ 修正：移動端裝置選擇器樣式 */
+  .navbar-item.device-selector {
+    position: static;
+    
+    .device-dropdown {
+      position: static;
+      transform: none;
+      background-color: #0f0f1a;
+      border: none;
+      border-radius: 0;
+      box-shadow: none;
+      margin-top: 0;
+      max-height: none;
+      backdrop-filter: none;
+      opacity: 1;
+      visibility: visible;
+      pointer-events: auto;
+      display: none; /* ✅ 移動端初始隱藏 */
+      
+      &.show {
+        display: block; /* ✅ 點擊後顯示 */
+      }
+    }
+
+    /* ✅ 移動端完全禁用 hover 效果 */
+    &:hover .device-dropdown {
+      /* 不做任何操作 */
+    }
+
+    /* ✅ 移動端點擊展開 */
+    &.mobile-expanded .device-dropdown {
+      display: block !important;
+    }
+  }
+
+  .device-dropdown-item {
+    padding: 12px 20px;
+    background-color: #0f0f1a;
+    
+    &:hover {
+      background-color: #16163a;
+    }
+    
+    &.active {
+      background-color: rgba(100, 149, 237, 0.2);
+      border-left: 3px solid #6495ED;
+    }
+  }
+
+  .device-dropdown-empty {
+    padding: 20px 16px;
+    background-color: #0f0f1a;
   }
 }
 
@@ -649,4 +877,4 @@
     width: auto; 
     height: auto; 
     object-fit: contain; 
-} 
+}

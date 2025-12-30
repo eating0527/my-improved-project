@@ -10,6 +10,7 @@ from typing import List, Optional, Dict
 import json
 from pathlib import Path
 import uuid
+import time
 
 from app.api.v1.router import api_router
 from app.core.config import OUTPUT_DIR
@@ -171,7 +172,7 @@ class GPSConnectionManager:
         """更新裝置的 GPS 資料"""
         self.device_gps_data[device_id] = gps_data
         device_name = self.device_names.get(device_id, "Unknown")
-        logger.info(
+        logger.debug(
             f"📍 更新設備 {device_id[:12]} ({device_name}) 的 GPS: "
             f"lat={gps_data.get('lat')}, lon={gps_data.get('lon')}"
         )
@@ -202,7 +203,7 @@ gps_manager = GPSConnectionManager()
 async def ping():
     return {"message": "pong"}
 
-# ✅ 修正：WebSocket 端點（支援客戶端自訂 deviceId + 裝置名稱）
+# ✅ 修正：WebSocket 端點（完整版）
 @app.websocket("/ws/gps")
 async def websocket_gps_endpoint(websocket: WebSocket):
     await gps_manager.connect(websocket)
@@ -216,7 +217,7 @@ async def websocket_gps_endpoint(websocket: WebSocket):
             try:
                 message = json.loads(data)
                 
-                # ✅ 新增：處理裝置註冊
+                # ✅ 處理裝置註冊
                 if message.get("type") == "register-device":
                     device_id = message.get("deviceId")
                     device_name = message.get("deviceName", "Unknown Device")
@@ -231,33 +232,36 @@ async def websocket_gps_endpoint(websocket: WebSocket):
                     
                     logger.info(
                         f"✅ 裝置已註冊: {device_id[:12]} ({device_name}), "
-                        f"類型: {device_type}"
+                        f"類型: {device_type}, "
+                        f"當前連接數: {len(gps_manager.active_connections)}"
                     )
                     
                     # ✅ 確認註冊
                     await websocket.send_text(json.dumps({
                         "type": "device-registered",
                         "deviceId": device_id,
-                        "deviceName": device_name
+                        "deviceName": device_name,
+                        "timestamp": time.time()
                     }))
                     
                     continue
                 
-                # ✅ 新增：處理名稱更新
+                # ✅ 處理名稱更新
                 if message.get("type") == "update-device-name":
-                    device_id = message.get("deviceId")
-                    device_name = message.get("deviceName")
+                    update_device_id = message.get("deviceId")
+                    new_device_name = message.get("deviceName")
                     
-                    if device_id and device_name:
-                        gps_manager.update_device_name(device_id, device_name)
+                    if update_device_id and new_device_name:
+                        gps_manager.update_device_name(update_device_id, new_device_name)
                         
-                        logger.info(f"📝 更新裝置名稱: {device_id[:12]} -> {device_name}")
+                        logger.info(f"📝 更新裝置名稱: {update_device_id[:12]} -> {new_device_name}")
                         
                         # ✅ 廣播給所有人
                         await gps_manager.broadcast_to_all(json.dumps({
                             "type": "device-name-updated",
-                            "deviceId": device_id,
-                            "deviceName": device_name
+                            "deviceId": update_device_id,
+                            "deviceName": new_device_name,
+                            "timestamp": time.time()
                         }))
                     
                     continue
@@ -267,40 +271,76 @@ async def websocket_gps_endpoint(websocket: WebSocket):
                     logger.warning("⚠️ 收到未註冊裝置的訊息，忽略")
                     continue
                 
-                # ✅ 加入 deviceId 和 deviceName 到訊息中
-                message["deviceId"] = device_id
-                message["deviceName"] = gps_manager.device_names.get(device_id, "Unknown Device")
-                
                 # ✅ 處理清除軌跡指令（廣播給其他裝置）
                 if message.get('type') == 'clear-path':
                     logger.info(f"🗑️ 收到清除軌跡指令 (設備 ID: {device_id[:12]})")
-                    await gps_manager.broadcast_to_others(json.dumps(message), device_id)
+                    
+                    clear_message = {
+                        "type": "clear-path",
+                        "deviceId": device_id,
+                        "deviceName": gps_manager.device_names.get(device_id, "Unknown Device"),
+                        "timestamp": time.time()
+                    }
+                    
+                    await gps_manager.broadcast_to_others(json.dumps(clear_message), device_id)
+                    logger.info(f"📤 已廣播清除軌跡指令給其他 {len(gps_manager.active_connections) - 1} 個裝置")
                     continue
                 
                 # ✅ 處理 GPS 資料（廣播給所有人，包含發送者）
                 if message.get('lat') is not None and message.get('lon') is not None:
+                    # ✅ 確保使用正確的 device_id（優先使用訊息中的，其次使用 WebSocket 的）
+                    message_device_id = message.get('deviceId', device_id)
+                    
+                    # ✅ 從快取中獲取裝置名稱（如果沒有則使用訊息中的）
+                    device_name = gps_manager.device_names.get(
+                        message_device_id, 
+                        message.get('deviceName', f'Device {message_device_id[:8]}')
+                    )
+                    
+                    # ✅ 確保訊息中包含完整資訊
+                    broadcast_message = {
+                        "lat": message.get('lat'),
+                        "lon": message.get('lon'),
+                        "alt": message.get('alt', 0),
+                        "accuracy": message.get('accuracy', 999),
+                        "deviceId": message_device_id,
+                        "deviceName": device_name,
+                        "deviceType": message.get('deviceType', 'unknown'),
+                        "timestamp": message.get('timestamp', time.time())
+                    }
+                    
                     logger.info(
-                        f"📍 收到 GPS (設備 ID: {device_id[:12]}, "
-                        f"名稱: {message['deviceName']}): "
-                        f"lat={message.get('lat'):.6f}, lon={message.get('lon'):.6f}, "
-                        f"accuracy={message.get('accuracy')}m"
+                        f"📍 收到 GPS (設備 ID: {message_device_id[:12]}, "
+                        f"名稱: {device_name}): "
+                        f"lat={broadcast_message['lat']:.6f}, "
+                        f"lon={broadcast_message['lon']:.6f}, "
+                        f"alt={broadcast_message['alt']:.2f}, "
+                        f"accuracy={broadcast_message['accuracy']:.2f}m"
                     )
                     
                     # ✅ 儲存 GPS 資料
-                    gps_manager.update_gps(device_id, message)
+                    gps_manager.update_gps(message_device_id, broadcast_message)
                     
                     # ✅ 廣播給所有人（包含發送者）
-                    await gps_manager.broadcast_to_all(json.dumps(message))
-                    logger.info(f"📤 已廣播 GPS 給所有裝置（包含發送者）")
+                    await gps_manager.broadcast_to_all(json.dumps(broadcast_message))
+                    logger.info(f"📤 已廣播 GPS 給 {len(gps_manager.active_connections)} 個裝置（包含發送者）")
                     continue
                 
-                # ✅ 其他訊息類型廣播給所有人
+                # ✅ 其他訊息類型：加上 deviceId 和 deviceName 後廣播
+                if "deviceId" not in message:
+                    message["deviceId"] = device_id
+                if "deviceName" not in message:
+                    message["deviceName"] = gps_manager.device_names.get(device_id, "Unknown Device")
+                
                 await gps_manager.broadcast_to_all(json.dumps(message))
+                logger.debug(f"📤 已廣播其他訊息: {message.get('type', 'unknown')}")
                 
             except json.JSONDecodeError as e:
                 logger.error(f"❌ JSON 解析失敗 (設備 ID: {device_id[:12] if device_id else 'N/A'}): {e}")
             except Exception as e:
                 logger.error(f"❌ 處理訊息時發生錯誤 (設備 ID: {device_id[:12] if device_id else 'N/A'}): {e}")
+                import traceback
+                logger.error(traceback.format_exc())
             
     except WebSocketDisconnect:
         if device_id:
@@ -318,6 +358,8 @@ async def websocket_gps_endpoint(websocket: WebSocket):
         
     except Exception as e:
         logger.error(f"❌ GPS WebSocket 錯誤 (設備 ID: {device_id[:12] if device_id else 'N/A'}): {e}")
+        import traceback
+        logger.error(traceback.format_exc())
         
         if device_id:
             # ✅ 發生錯誤時也要廣播斷線事件

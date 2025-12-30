@@ -23,6 +23,18 @@ import CameraUpload from "./components/CameraUpload";
 
 console.log("Origin LAT:", import.meta.env.VITE_ORIGIN_LAT);
 
+// ✅ 1. 定義顏色庫 (分配給不同裝置的軌跡)
+const DEVICE_COLORS = [
+  '#ff0000', // 紅(預設)
+  '#00ff00', // 綠
+  '#0088ff', // 藍
+  '#ffff00', // 黃
+  '#ff00ff', // 紫
+  '#00ffff', // 青
+  '#ff8800', // 橘
+  '#ffffff', // 白
+];
+
 interface AppProps {
   activeView: "stereogram" | "floor-plan";
 }
@@ -35,9 +47,12 @@ function App({ activeView }: AppProps) {
   // ✅ 場景準備狀態
   const [isSceneReady, setIsSceneReady] = useState(false);
 
-  // ✅ UAV 軌跡狀態（統一管理）
+  // ✅ UAV 軌跡狀態（單機模式保留，多機模式用 devicePaths）
   const [uavPath, setUavPath] = useState<Array<{ x: number; y: number; z: number }>>([]);
   
+  // ✅ 2. 新增：多裝置軌跡狀態 (Map<DeviceId, PathArray>)
+  const [devicePaths, setDevicePaths] = useState<Map<string, Array<{ x: number; y: number; z: number }>>>(new Map());
+
   // ✅ UAV 當前位置狀態
   const [uavPosition, setUavPosition] = useState<[number, number, number]>([0, 10, 0]);
   
@@ -74,18 +89,35 @@ function App({ activeView }: AppProps) {
   // ✅ 移動距離狀態
   const [totalDistance, setTotalDistance] = useState<number>(0);
 
-  // ✅ 修改：多裝置 UAV 位置管理（加上 deviceName）
+  // ✅ 修改：多裝置 UAV 位置管理（加上 alt）
+  // 這是給 3D 場景用的高頻率更新資料
   const [allDevicePositions, setAllDevicePositions] = useState<Map<string, {
     position: [number, number, number]
     deviceId: string
-    deviceName?: string  // ✅ 新增：裝置名稱
+    deviceName: string
     lat: number
     lon: number
+    alt: number
     accuracy: number
+  }>>(new Map())
+
+  // ✅ 新增：儲存來自 UserLocation 的 allDevices（完整 GPS 資料）
+  // 這是給 Navbar UI 用的穩定資料
+  const [gpsAllDevices, setGpsAllDevices] = useState<Map<string, {
+    lat: number
+    lon: number
+    alt: number
+    accuracy: number
+    deviceName: string
+    timestamp: number
+    lastUpdateTime: number
   }>>(new Map())
 
   // ✅ 新增：當前裝置 ID
   const [myDeviceId, setMyDeviceId] = useState<string | null>(null)
+
+  // ✅ 新增：選擇的裝置 ID 狀態
+  const [selectedDeviceId, setSelectedDeviceId] = useState<string | null>(null)
 
   const {
     tempDevices,
@@ -231,15 +263,33 @@ function App({ activeView }: AppProps) {
     console.log("🚁 App 收到 UAV 位置更新:", uavPosition);
   }, [uavPosition]);
 
-  // ✅ 修改：監聽多裝置位置變化（顯示 deviceName）
+  // ✅ 修改：監聽多裝置位置變化（顯示 deviceName 和 alt）
   useEffect(() => {
     if (allDevicePositions.size > 0) {
       console.log("📱 App 收到多裝置位置更新，裝置數:", allDevicePositions.size);
       allDevicePositions.forEach((device, deviceId) => {
-        console.log(`📱 裝置 ${deviceId.substring(0, 8)} (${device.deviceName || 'N/A'}):`, device);
+        console.log(`📱 裝置 ${deviceId.substring(0, 8)} (${device.deviceName || 'N/A'}):`, {
+          ...device,
+          alt: device.alt
+        });
       });
     }
   }, [allDevicePositions]);
+
+  // ✅ 新增：監聽 gpsAllDevices 變化
+  useEffect(() => {
+    if (gpsAllDevices.size > 0) {
+      console.log("📡 App 收到 GPS 裝置列表更新，裝置數:", gpsAllDevices.size);
+      gpsAllDevices.forEach((device, deviceId) => {
+        console.log(`📡 GPS 裝置 ${deviceId.substring(0, 8)}:`, {
+          deviceName: device.deviceName,
+          lat: device.lat.toFixed(6),
+          lon: device.lon.toFixed(6),
+          accuracy: device.accuracy.toFixed(2)
+        });
+      });
+    }
+  }, [gpsAllDevices]);
 
   const sortedDevicesForSidebar = useMemo(() => {
     return [...tempDevices].sort((a, b) => {
@@ -411,6 +461,7 @@ function App({ activeView }: AppProps) {
   // ✅ 清除軌跡回調函數
   const handleClearPath = useCallback(() => {
     setUavPath([])
+    setDevicePaths(new Map()) // ✅ 3. 清除所有裝置軌跡
     setTotalDistance(0)
     console.log("🗑️ 已清除所有軌跡")
   }, [])
@@ -428,37 +479,72 @@ function App({ activeView }: AppProps) {
     console.log("🚁 App 接收到 UAV 位置更新:", position)
   }, [])
 
-  // ✅ 修改：多裝置位置更新回調（接收 deviceName）
+  // ✅ 修改：多裝置位置更新回調（同時更新位置 + 軌跡）
   const handleMultiDevicePositionUpdate = useCallback((
     deviceId: string,
     position: [number, number, number],
     lat: number,
     lon: number,
     accuracy: number,
-    deviceName?: string  // ✅ 新增：接收 deviceName 參數
+    deviceName?: string,
+    alt?: number
   ) => {
-    console.log(`📱 App 接收到裝置 ${deviceId.substring(0, 8)} 位置更新:`, {
-      position,
-      lat,
-      lon,
-      accuracy,
-      deviceName  // ✅ 新增：記錄 deviceName
-    });
+    console.log(`📱 App 接收到裝置 ${deviceId.substring(0, 8)} 位置更新`);
 
+    // 1. 更新當前位置 (保持原本邏輯)
     setAllDevicePositions(prev => {
       const newMap = new Map(prev);
       newMap.set(deviceId, {
         position,
         deviceId,
-        deviceName,  // ✅ 新增：儲存 deviceName
+        deviceName: deviceName || 'Unknown',
         lat,
         lon,
+        alt: alt || 0,
         accuracy
       });
-      console.log(`📱 更新後裝置總數: ${newMap.size}`);
       return newMap;
     });
+
+    // 2. 🔥 新增：同時更新該裝置的軌跡
+    setDevicePaths(prev => {
+      const newMap = new Map(prev);
+      const currentPath = newMap.get(deviceId) || [];
+      const newPoint = { x: position[0], y: position[1], z: position[2] };
+      
+      // 簡單優化：只有位置移動超過 0.1 單位才記錄，避免原地累積太多點
+      const lastPoint = currentPath[currentPath.length - 1];
+      const hasMoved = !lastPoint || 
+          Math.abs(lastPoint.x - newPoint.x) > 0.1 || 
+          Math.abs(lastPoint.y - newPoint.y) > 0.1 || 
+          Math.abs(lastPoint.z - newPoint.z) > 0.1;
+
+      if (hasMoved) {
+          const updatedPath = [...currentPath, newPoint];
+          // 限制軌跡長度，只保留最近 1000 點
+          if (updatedPath.length > 1000) updatedPath.shift();
+          newMap.set(deviceId, updatedPath);
+          return newMap;
+      }
+      return prev; // 沒變動就不更新 state，節省效能
+    });
   }, []);
+
+  // --- 💡 關鍵修正：接收 UserLocation 的 allDevices (移除 0,0 過濾) ---
+  const handleAllDevicesUpdate = useCallback((devices: Map<string, any>) => {
+    console.log('📱 App 接收到 allDevices 更新，原始裝置數:', devices.size)
+    
+    // 🔍 Debug: 印出所有收到的裝置內容
+    devices.forEach((d, id) => {
+        // 可以打開這行檢查
+        // console.log(`📡 [App] 收到裝置 ${id.substring(0, 6)}: Lat=${d.lat}, Lon=${d.lon}`)
+    })
+
+    // ✅ 改為：直接接收所有裝置，不做過濾
+    // 讓 Navbar 自己決定怎麼顯示（顯示 0.0m 也比直接消失好）
+    setGpsAllDevices(new Map(devices))
+    
+  }, [])
 
   // ✅ 新增：接收當前裝置 ID
   const handleMyDeviceIdUpdate = useCallback((deviceId: string) => {
@@ -482,6 +568,38 @@ function App({ activeView }: AppProps) {
       
       return newMap;
     });
+
+    // ✅ 同時從 gpsAllDevices 移除
+    setGpsAllDevices(prev => {
+      const newMap = new Map(prev);
+      const deleted = newMap.delete(deviceId);
+      
+      if (deleted) {
+        console.log(`✅ 已從 gpsAllDevices 移除裝置 ${deviceId.substring(0, 8)}，剩餘: ${newMap.size}`);
+      }
+      
+      return newMap;
+    });
+
+    // ✅ 如果刪除的是當前選擇的裝置，自動切換到第一個可用裝置
+    if (deviceId === selectedDeviceId) {
+      setSelectedDeviceId(prev => {
+        const remainingDevices = Array.from(gpsAllDevices.keys()).filter(id => id !== deviceId);
+        const newSelectedId = remainingDevices.length > 0 ? remainingDevices[0] : null;
+        if (newSelectedId) {
+          console.log(`🔄 當前選擇的裝置已斷線，自動切換到: ${newSelectedId.substring(0, 8)}`);
+        } else {
+          console.log(`⚠️ 沒有其他裝置可切換`);
+        }
+        return newSelectedId;
+      });
+    }
+  }, [selectedDeviceId, gpsAllDevices]);
+
+  // ✅ 新增：處理裝置選擇
+  const handleDeviceSelect = useCallback((deviceId: string) => {
+    console.log('📱 App 切換裝置:', deviceId.substring(0, 8));
+    setSelectedDeviceId(deviceId);
   }, []);
 
   const renderActiveComponent = useCallback(() => {
@@ -514,6 +632,10 @@ function App({ activeView }: AppProps) {
             usrpData={usrpData}
             allDevicePositions={allDevicePositions}
             myDeviceId={myDeviceId}
+            
+            // ✅ 4. 傳遞多軌跡資料與顏色設定給 SceneView
+            devicePaths={devicePaths}
+            deviceColors={DEVICE_COLORS}
           />
         );
       default:
@@ -546,6 +668,7 @@ function App({ activeView }: AppProps) {
     usrpData,
     allDevicePositions,
     myDeviceId,
+    devicePaths, // 加入依賴
   ]);
 
   if (loading) return <div className="loading">載入中...</div>;
@@ -566,6 +689,9 @@ function App({ activeView }: AppProps) {
             onMultiDevicePositionUpdate={handleMultiDevicePositionUpdate}
             onMyDeviceIdUpdate={handleMyDeviceIdUpdate}
             onDeviceDisconnected={handleDeviceDisconnected}
+            selectedDeviceId={selectedDeviceId}
+            onSelectedDeviceIdChange={handleDeviceSelect}
+            onAllDevicesUpdate={handleAllDevicesUpdate}
           />
 
           <TxInterferenceLocation
@@ -625,6 +751,12 @@ function App({ activeView }: AppProps) {
             onMenuClick={handleMenuClick}
             activeComponent={activeComponent}
             currentScene={currentScene}
+            // 🔥 關鍵修正：這裡改用 gpsAllDevices (UI 穩定名單)
+            // 避免 allDevicePositions (3D 高頻更新) 造成的列表閃爍衝突
+            allDevices={gpsAllDevices}
+            myDeviceId={myDeviceId}
+            selectedDeviceId={selectedDeviceId}
+            onDeviceSelect={handleDeviceSelect}
           />
           <div className="content-wrapper">
             <Layout

@@ -1,16 +1,16 @@
 /**
- * WebSocket Hook
- * 負責管理 WebSocket 連接，提供實時數據更新功能
+ * WebSocket Hook (終極優化版)
+ * 1. 解決父元件渲染導致的頻繁斷線 (Ref Pattern)
+ * 2. 解決手機螢幕關閉/休眠後的斷線重連 (Page Lifecycle)
  */
 import { useState, useEffect, useCallback, useRef } from 'react';
-import { WebSocketEvent } from '../types/charts';
 
 interface UseWebSocketOptions {
   url?: string;
   reconnectInterval?: number;
   maxReconnectAttempts?: number;
   enableReconnect?: boolean;
-  onMessage?: (event: WebSocketEvent) => void;
+  onMessage?: (event: MessageEvent) => void;
   onError?: (error: Event) => void;
   onConnect?: () => void;
   onDisconnect?: () => void;
@@ -28,15 +28,22 @@ interface UseWebSocketReturn {
 
 export const useWebSocket = (options: UseWebSocketOptions = {}): UseWebSocketReturn => {
   const {
-    url = 'wss://backend.simworld.website/ws/gps',  // ✅ 修改為正確的 WebSocket URL
-    reconnectInterval = 3000,  // ✅ 減少重連間隔到 3 秒
-    maxReconnectAttempts = 10,  // ✅ 增加最大重試次數
+    url = 'wss://backend.simworld.website/ws/gps',
+    reconnectInterval = 3000,
+    maxReconnectAttempts = 10,
     enableReconnect = true,
     onMessage,
     onError,
     onConnect,
     onDisconnect
   } = options;
+
+  // --- 💡 優化 1：使用 Ref 儲存回呼函式，避免依賴變動觸發重連 ---
+  const callbacksRef = useRef({ onMessage, onError, onConnect, onDisconnect });
+  
+  useEffect(() => {
+    callbacksRef.current = { onMessage, onError, onConnect, onDisconnect };
+  }, [onMessage, onError, onConnect, onDisconnect]);
 
   const [isConnected, setIsConnected] = useState(false);
   const [reconnectCount, setReconnectCount] = useState(0);
@@ -63,173 +70,145 @@ export const useWebSocket = (options: UseWebSocketOptions = {}): UseWebSocketRet
     }
   }, [connectionStatus, clearReconnectTimeout]);
 
+  // --- 💡 核心連線邏輯 ---
   const connect = useCallback(() => {
-    // 如果已經連接或正在連接，不重複連接
+    // 檢查是否已經在連接中或已連接
     if (wsRef.current?.readyState === WebSocket.CONNECTING || 
         wsRef.current?.readyState === WebSocket.OPEN) {
-      console.log('WebSocket 已經連接或正在連接，跳過重複連接');
       return;
     }
 
-    // 如果超過最大重試次數，標記為失敗
     if (reconnectCount >= maxReconnectAttempts) {
-      console.warn(`WebSocket 已達到最大重試次數 (${maxReconnectAttempts})，停止重連`);
       setConnectionStatus('failed');
       shouldReconnect.current = false;
       return;
     }
 
     try {
+      console.log('🔄 建立 WebSocket 連線...');
       setConnectionStatus('connecting');
-      
-      // ✅ 使用傳入的 URL 參數
-      console.log(`🔌 正在連接 WebSocket (嘗試 ${reconnectCount + 1}/${maxReconnectAttempts}):`, url);
-      
       wsRef.current = new WebSocket(url);
 
       wsRef.current.onopen = () => {
-        console.log('✅ WebSocket 連接已建立');
+        console.log('✅ WebSocket 已連接');
         setIsConnected(true);
         setConnectionStatus('connected');
         setReconnectCount(0);
         isManualDisconnect.current = false;
-        onConnect?.();
+        callbacksRef.current.onConnect?.();
       };
 
-      wsRef.current.onmessage = (event) => {
+      wsRef.current.onmessage = (event: MessageEvent) => {
         try {
-          // ✅ 修改：event.data 是字串，需要先解析
-          const data = JSON.parse(event.data);
-          console.log('📥 收到 WebSocket 消息:', data);
-          
-          // 轉換為標準格式
-          const wsEvent: WebSocketEvent = {
-            type: data.type || 'gps',
-            data: data,
-            timestamp: data.timestamp || new Date().toISOString()
-          };
-          
-          onMessage?.(wsEvent);
+          callbacksRef.current.onMessage?.(event);
         } catch (error) {
-          console.error('❌ 解析 WebSocket 消息失敗:', error);
+          console.error('❌ 處理 WebSocket 消息失敗:', error);
         }
       };
 
       wsRef.current.onclose = (event) => {
-        console.log(`📡 WebSocket 連接已關閉: code=${event.code}, reason=${event.reason}`);
+        console.log(`🔌 WebSocket 已斷開 (Code: ${event.code})`);
         setIsConnected(false);
+        setConnectionStatus('disconnected');
         
+        // 只有非手動斷開才觸發外部 callback
         if (!isManualDisconnect.current) {
-          setConnectionStatus('disconnected');
-          onDisconnect?.();
+          callbacksRef.current.onDisconnect?.();
 
-          // 如果需要重連且未超過最大重連次數且啟用重連
-          if (shouldReconnect.current && 
-              enableReconnect && 
-              reconnectCount < maxReconnectAttempts) {
-            
-            console.log(`🔄 將在 ${reconnectInterval}ms 後嘗試重連...`);
+          // 自動重連機制
+          if (shouldReconnect.current && enableReconnect && reconnectCount < maxReconnectAttempts) {
+            console.log(`⏳ ${reconnectInterval / 1000} 秒後嘗試重連...`);
             reconnectTimeoutRef.current = window.setTimeout(() => {
               setReconnectCount(prev => prev + 1);
               connect();
             }, reconnectInterval);
-          } else if (reconnectCount >= maxReconnectAttempts) {
-            console.warn('❌ 已達最大重連次數，停止重連');
-            setConnectionStatus('failed');
-            shouldReconnect.current = false;
           }
         }
       };
 
       wsRef.current.onerror = (error) => {
-        console.error('❌ WebSocket 錯誤:', error);
+        console.error('❌ WebSocket 發生錯誤');
         setConnectionStatus('disconnected');
-        onError?.(error);
+        callbacksRef.current.onError?.(error);
       };
 
     } catch (error) {
-      console.error('❌ 創建 WebSocket 連接失敗:', error);
+      console.error('❌ WebSocket 初始化失敗:', error);
       setConnectionStatus('failed');
-      onError?.(error as Event);
+      callbacksRef.current.onError?.(error as Event);
     }
-  }, [url, reconnectInterval, maxReconnectAttempts, reconnectCount, onMessage, onError, onConnect, onDisconnect, enableReconnect]);
+  }, [url, reconnectInterval, maxReconnectAttempts, reconnectCount, enableReconnect]);
 
   const disconnect = useCallback(() => {
-    console.log('🛑 手動斷開 WebSocket 連接');
     isManualDisconnect.current = true;
     shouldReconnect.current = false;
-    
     clearReconnectTimeout();
-
     if (wsRef.current) {
       wsRef.current.close(1000, 'Manual disconnect');
       wsRef.current = null;
     }
-    
     setIsConnected(false);
     setConnectionStatus('disconnected');
     setReconnectCount(0);
   }, [clearReconnectTimeout]);
 
   const sendMessage = useCallback((data: any) => {
-    if (wsRef.current?.readyState === WebSocket.OPEN) {
-      try {
-        const message = typeof data === 'string' ? data : JSON.stringify(data);
-        wsRef.current.send(message);
-        console.log('📤 發送 WebSocket 消息:', message);
-      } catch (error) {
-        console.error('❌ 發送 WebSocket 消息失敗:', error);
-      }
-    } else {
-      console.warn('⚠️ WebSocket 未連接，無法發送消息 (當前狀態:', wsRef.current?.readyState, ')');
+    if (wsRef.current && wsRef.current.readyState === WebSocket.OPEN) {
+      const message = typeof data === 'string' ? data : JSON.stringify(data);
+      wsRef.current.send(message);
     }
   }, []);
 
-  // 組件掛載時嘗試連接
-  useEffect(() => {
-    let mounted = true;
-    let connectTimeout: number;
-
-    if (enableReconnect && mounted) {
-      // 延遲連接，避免立即失敗
-      connectTimeout = window.setTimeout(() => {
-        if (mounted) {
-          connect();
-        }
-      }, 500);
-    }
-
-    return () => {
-      mounted = false;
-      if (connectTimeout) {
-        clearTimeout(connectTimeout);
-      }
-      disconnect();
-    };
-  }, [url, enableReconnect]); // ✅ 加入 url 依賴
-
-  // 瀏覽器可見性變化時的處理
+  // --- 💡 優化 2：監聽「頁面喚醒」與「網路恢復」事件 ---
+  // 這能解決手機關螢幕後，瀏覽器凍結導致 WebSocket 斷線卻沒重連的問題
   useEffect(() => {
     const handleVisibilityChange = () => {
-      if (document.visibilityState === 'visible' && 
-          !isConnected && 
-          enableReconnect && 
-          connectionStatus !== 'failed') {
-        console.log('👀 頁面變為可見，嘗試重連 WebSocket');
-        resetReconnection();
-        // 延遲一點再連接，確保頁面已完全恢復
-        setTimeout(() => {
+      if (document.visibilityState === 'visible') {
+        console.log('👀 頁面已喚醒 (Visible)，檢查連線狀態...');
+        
+        // 如果 WebSocket 物件不存在，或是已經關閉/正在關閉
+        if (!wsRef.current || 
+            wsRef.current.readyState === WebSocket.CLOSED || 
+            wsRef.current.readyState === WebSocket.CLOSING) {
+          
+          console.log('⚡ 偵測到斷線，立即執行喚醒重連！');
+          // 重置狀態以允許立即重連
+          shouldReconnect.current = true;
+          isManualDisconnect.current = false;
+          setReconnectCount(0); 
           connect();
-        }, 1000);
+        }
       }
+    };
+
+    const handleOnline = () => {
+      console.log('🌐 網路已恢復 (Online)，嘗試重連...');
+      shouldReconnect.current = true;
+      isManualDisconnect.current = false;
+      setReconnectCount(0);
+      connect();
     };
 
     document.addEventListener('visibilitychange', handleVisibilityChange);
-    
+    window.addEventListener('online', handleOnline);
+
     return () => {
       document.removeEventListener('visibilitychange', handleVisibilityChange);
+      window.removeEventListener('online', handleOnline);
     };
-  }, [isConnected, enableReconnect, connectionStatus, resetReconnection, connect]);
+  }, [connect]);
+
+  // 組件掛載時連線
+  useEffect(() => {
+    if (enableReconnect) {
+      shouldReconnect.current = true;
+      connect(); // 立即嘗試連線
+      
+      return () => {
+        disconnect();
+      };
+    }
+  }, [connect, disconnect, enableReconnect]);
 
   return {
     isConnected,

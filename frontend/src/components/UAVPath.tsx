@@ -12,12 +12,13 @@ export default function UAVPath({
   color = '#00ff00',
   lineWidth = 3
 }: UAVPathProps) {
-  // 如果路徑少於 2 個點，不渲染
+  // 如果路徑少於 2 個點，無法畫線，直接不渲染
   if (path.length < 2) {
     return null
   }
 
-  console.log(`📍 渲染 UAV 軌跡，點數: ${path.length}`)
+  // ❌ 移除這行，避免移動時 Console 被瘋狂洗版
+  // console.log(`📍 渲染 UAV 軌跡，點數: ${path.length}`)
 
   // 轉換為 Line 組件需要的格式
   const points = useMemo(() => {
@@ -27,7 +28,7 @@ export default function UAVPath({
   return (
     <Line
       points={points}
-      color={color}
+      color={color}       // ✅ 這裡會接收 MainScene 傳來的紅色、藍色等
       lineWidth={lineWidth}
       transparent
       opacity={0.8}

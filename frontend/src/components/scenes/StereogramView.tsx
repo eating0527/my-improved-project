@@ -66,15 +66,19 @@ interface SceneViewProps {
         altitude?: number | null
         device_name: string
     }>
-    // ✅ 新增：多裝置 UAV 位置
     allDevicePositions?: Map<string, {
         position: [number, number, number]
         deviceId: string
+        deviceName: string
         lat: number
         lon: number
+        alt: number
         accuracy: number
     }>
     myDeviceId?: string | null
+    // ✅ 新增這兩個 props
+    devicePaths?: Map<string, Array<{ x: number; y: number; z: number }>>
+    deviceColors?: string[]
 }
 
 export default function SceneView({
@@ -93,78 +97,20 @@ export default function SceneView({
     origin,
     scale,
     usrpData = [],
-    allDevicePositions,  // ✅ 新增
-    myDeviceId,  // ✅ 新增
+    allDevicePositions,
+    myDeviceId,
+    // ✅ 接住傳進來的 props
+    devicePaths,
+    deviceColors,
 }: SceneViewProps) {
     const canvasRef = useRef<HTMLCanvasElement>(null)
     
-    // ✅ 使用 state 來管理照片列表，這樣可以動態更新
     const [photos, setPhotos] = useState(initialPhotos)
     
-    // ✅ 當 props 中的 photos 改變時，更新 state
     useEffect(() => {
         setPhotos(initialPhotos)
     }, [initialPhotos])
 
-    // ✅ 添加調試訊息，確認 devices 是否正確傳遞
-    useEffect(() => {
-        console.log('🎥 SceneView 收到的 devices:', devices);
-        console.log('🎥 devices 數量:', devices.length);
-        console.log('🎥 devices 的 roles:', devices.map(d => ({ id: d.id, role: d.role })));
-    }, [devices]);
-
-    // ✅ 監聽軌跡資料
-    useEffect(() => {
-        if (uavPath.length > 0) {
-            console.log('🎥 SceneView 收到軌跡資料，點數:', uavPath.length);
-        }
-    }, [uavPath]);
-
-    // ✅ 監聽 UAV 位置變化
-    useEffect(() => {
-        console.log('🎥 SceneView 收到 UAV 位置:', uavPosition);
-    }, [uavPosition]);
-
-    // ✅ 監聽照片資料
-    useEffect(() => {
-        if (photos.length > 0) {
-            console.log('🎥 SceneView 收到照片資料，數量:', photos.length);
-            console.log('🎥 照片內容:', photos);
-        }
-    }, [photos]);
-
-    // ✅ 新增：監聽 USRP 資料
-    useEffect(() => {
-        if (usrpData.length > 0) {
-            console.log('📡 SceneView 收到 USRP 資料，數量:', usrpData.length);
-            console.log('📡 USRP 內容:', usrpData);
-        }
-    }, [usrpData]);
-
-    // ✅ 新增：監聽多裝置位置
-    useEffect(() => {
-        if (allDevicePositions && allDevicePositions.size > 0) {
-            console.log('🎥 SceneView 收到多裝置位置，數量:', allDevicePositions.size);
-            allDevicePositions.forEach((device, deviceId) => {
-                console.log(`🎥 裝置 ${deviceId.substring(0, 8)}:`, device);
-            });
-        }
-    }, [allDevicePositions]);
-
-    // ✅ 新增：監聽當前裝置 ID
-    useEffect(() => {
-        if (myDeviceId) {
-            console.log('🎥 SceneView 收到當前裝置 ID:', myDeviceId.substring(0, 8));
-        }
-    }, [myDeviceId]);
-
-    // ✅ 監聽 origin 和 scale
-    useEffect(() => {
-        console.log('🎥 SceneView origin:', origin);
-        console.log('🎥 SceneView scale:', scale);
-    }, [origin, scale]);
-
-    // ✅ 新增：WebSocket 監聽，處理照片上傳和刪除事件
     useEffect(() => {
         let ws: WebSocket | null = null
         
@@ -179,12 +125,9 @@ export default function SceneView({
                 ws.onmessage = (event) => {
                     try {
                         const data = JSON.parse(event.data)
-                        console.log('📩 StereogramView 收到 WebSocket 訊息:', data)
                         
-                        // ✅ 處理照片上傳事件
                         if (data.type === 'photo-upload') {
                             console.log('📸 StereogramView 收到照片上傳事件:', data)
-                            
                             const newPhoto = {
                                 url: data.url,
                                 timestamp: data.timestamp,
@@ -192,32 +135,18 @@ export default function SceneView({
                                 longitude: data.longitude,
                                 altitude: data.altitude
                             }
-                            
-                            // ✅ 檢查照片是否已存在（避免重複）
                             setPhotos(prevPhotos => {
                                 const exists = prevPhotos.some(p => p.url === newPhoto.url)
-                                if (exists) {
-                                    console.log('⚠️ 照片已存在，不重複新增:', newPhoto.url)
-                                    return prevPhotos
-                                }
-                                
-                                console.log('✅ 添加新照片到場景:', newPhoto)
+                                if (exists) return prevPhotos
                                 return [newPhoto, ...prevPhotos]
                             })
                         }
                         
-                        // ✅ 處理照片刪除事件
                         if (data.type === 'photo_deleted') {
                             console.log('🗑️ StereogramView 收到照片刪除事件:', data)
-                            
-                            // ✅ 從照片列表中移除
-                            setPhotos(prevPhotos => {
-                                const newPhotos = prevPhotos.filter(photo => 
-                                    !photo.url.includes(data.filename)
-                                )
-                                console.log(`✅ 已從場景移除照片: ${data.filename}，剩餘 ${newPhotos.length} 張`)
-                                return newPhotos
-                            })
+                            setPhotos(prevPhotos => 
+                                prevPhotos.filter(photo => !photo.url.includes(data.filename))
+                            )
                         }
                         
                     } catch (error) {
@@ -231,7 +160,6 @@ export default function SceneView({
                 
                 ws.onclose = () => {
                     console.log('🔌 StereogramView WebSocket 連線關閉')
-                    // ✅ 嘗試重新連線
                     setTimeout(() => {
                         console.log('🔄 嘗試重新連線 WebSocket...')
                         connectWebSocket()
@@ -243,19 +171,16 @@ export default function SceneView({
             }
         }
         
-        // ✅ 啟動 WebSocket 連線
         connectWebSocket()
         
-        // ✅ 清理函數：組件卸載時關閉 WebSocket
         return () => {
             if (ws) {
                 console.log('🔌 關閉 StereogramView WebSocket 連線')
                 ws.close()
             }
         }
-    }, []) // ✅ 空依賴陣列，只在組件掛載時執行一次
+    }, [])
 
-    // WebGL 上下文恢復處理
     const handleWebGLContextLost = useCallback((event: Event) => {
         console.warn('WebGL 上下文丟失，嘗試恢復...')
         event.preventDefault()
@@ -265,25 +190,15 @@ export default function SceneView({
         console.log('WebGL 上下文已恢復')
     }, [])
 
-    // 添加 WebGL 上下文事件監聽器
     useEffect(() => {
         const canvas = canvasRef.current
         if (canvas) {
             canvas.addEventListener('webglcontextlost', handleWebGLContextLost)
-            canvas.addEventListener(
-                'webglcontextrestored',
-                handleWebGLContextRestored
-            )
+            canvas.addEventListener('webglcontextrestored', handleWebGLContextRestored)
 
             return () => {
-                canvas.removeEventListener(
-                    'webglcontextlost',
-                    handleWebGLContextLost
-                )
-                canvas.removeEventListener(
-                    'webglcontextrestored',
-                    handleWebGLContextRestored
-                )
+                canvas.removeEventListener('webglcontextlost', handleWebGLContextLost)
+                canvas.removeEventListener('webglcontextrestored', handleWebGLContextRestored)
             }
         }
     }, [handleWebGLContextLost, handleWebGLContextRestored])
@@ -300,13 +215,10 @@ export default function SceneView({
                 overflow: 'hidden',
             }}
         >
-            {/* 星空星點層（在最底層，不影響互動） */}
             <Starfield starCount={180} />
 
-            {/* 添加衛星圖例 - 只有在有衛星資料時才顯示 */}
             {satellites && satellites.length > 0 && <SatelliteLegend />}
 
-            {/* 3D Canvas內容照舊，會蓋在星空上 */}
             <Canvas
                 ref={canvasRef}
                 shadows
@@ -321,7 +233,6 @@ export default function SceneView({
                     failIfMajorPerformanceCaveat: false,
                 }}
                 onCreated={({ gl }) => {
-                    // 配置渲染器的上下文恢復選項
                     gl.debug.checkShaderErrors = true
                     console.log('WebGL 渲染器已創建')
                 }}
@@ -344,6 +255,7 @@ export default function SceneView({
                     shadow-radius={8}
                 />
                 <Suspense fallback={null}>
+                    {/* ✅ 將資料往下傳遞給 MainScene */}
                     <MainScene
                         devices={devices}
                         auto={auto}
@@ -360,8 +272,11 @@ export default function SceneView({
                         origin={origin}
                         scale={scale}
                         usrpData={usrpData}
-                        allDevicePositions={allDevicePositions}  // ✅ 新增
-                        myDeviceId={myDeviceId}  // ✅ 新增
+                        allDevicePositions={allDevicePositions}
+                        myDeviceId={myDeviceId}
+                        // 🔥 關鍵傳遞
+                        devicePaths={devicePaths}
+                        deviceColors={deviceColors}
                     />
                     <ContactShadows
                         position={[0, 0.1, 0]}
