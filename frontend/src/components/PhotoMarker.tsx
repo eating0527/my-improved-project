@@ -9,27 +9,15 @@ interface PhotoMarkerProps {
   onClick?: () => void
   photoIndex?: number
   totalPhotos?: number
-  latitude?: number   // ✅ 新增：緯度
-  longitude?: number  // ✅ 新增：經度
+  latitude?: number
+  longitude?: number
 }
 
-/**
- * ✅ 計算照片的相對新鮮度（基於照片列表中的順序）
- * @param photoIndex 照片在列表中的索引（0 = 最新）
- * @param totalPhotos 照片總數
- * @returns 新鮮度值（1 = 最新，0.2 = 最舊）
- */
 function calculateRelativeFreshness(photoIndex: number, totalPhotos: number): number {
-  if (totalPhotos <= 1) {
-    return 1 // 只有一張照片時，設為最亮
-  }
-  
+  if (totalPhotos <= 1) return 1
   const minOpacity = 0.2
   const maxOpacity = 1.0
-  
-  // 線性插值：第一張照片 = 1.0，最後一張照片 = 0.2
   const freshness = maxOpacity - (photoIndex / (totalPhotos - 1)) * (maxOpacity - minOpacity)
-  
   return freshness
 }
 
@@ -40,47 +28,41 @@ const PhotoMarker: React.FC<PhotoMarkerProps> = ({
   onClick,
   photoIndex = 0,
   totalPhotos = 1,
-  latitude,   // ✅ 接收緯度
-  longitude,  // ✅ 接收經度
+  latitude,
+  longitude,
 }) => {
   const [hovered, setHovered] = useState(false)
   const [showPreview, setShowPreview] = useState(false)
   const meshRef = useRef<THREE.Mesh>(null)
 
-  // ✅ 計算相對新鮮度
   const freshness = calculateRelativeFreshness(photoIndex, totalPhotos)
 
-  // 格式化時間戳記
   const formatTimestamp = (ts: string) => {
     try {
-      // 假設格式為 "20251118_143000"
       const year = ts.substring(0, 4)
       const month = ts.substring(4, 6)
       const day = ts.substring(6, 8)
       const hour = ts.substring(9, 11)
       const minute = ts.substring(11, 13)
       const second = ts.substring(13, 15)
-      
       return `${year}/${month}/${day} ${hour}:${minute}:${second}`
     } catch {
       return ts
     }
   }
 
-  // ✅ 格式化經緯度（保留 6 位小數）
   const formatGPS = (lat?: number, lon?: number) => {
-    if (lat === undefined || lon === undefined) {
-      return '無 GPS 資料'
-    }
+    if (lat === undefined || lon === undefined) return '無 GPS 資料'
     return `${lat.toFixed(6)}, ${lon.toFixed(6)}`
   }
 
   return (
     <group position={position}>
-      {/* 照片圖標球體（根據相對新鮮度調整透明度） */}
+      {/* 照片圖標球體 */}
       <mesh
         ref={meshRef}
-        onPointerOver={() => {
+        onPointerOver={(e) => {
+          e.stopPropagation() // 防止事件穿透
           setHovered(true)
           setShowPreview(true)
         }}
@@ -88,9 +70,12 @@ const PhotoMarker: React.FC<PhotoMarkerProps> = ({
           setHovered(false)
           setShowPreview(false)
         }}
-        onClick={() => {
+        onClick={(e) => {
+          e.stopPropagation()
           console.log('📸 點擊照片標記:', photoUrl)
           onClick?.()
+          // 手機版優化：點擊時也可以切換預覽顯示，方便觸控操作
+          setShowPreview(prev => !prev) 
         }}
       >
         <sphereGeometry args={[5, 32, 32]} />
@@ -103,7 +88,7 @@ const PhotoMarker: React.FC<PhotoMarkerProps> = ({
         />
       </mesh>
 
-      {/* 光環效果（根據相對新鮮度調整透明度） */}
+      {/* 光環效果 */}
       <mesh rotation={[Math.PI / 2, 0, 0]}>
         <ringGeometry args={[6, 8, 32]} />
         <meshBasicMaterial
@@ -114,11 +99,12 @@ const PhotoMarker: React.FC<PhotoMarkerProps> = ({
         />
       </mesh>
 
-      {/* 照片圖標 HTML 標籤（根據相對新鮮度調整背景透明度） */}
+      {/* 標籤：照片編號 */}
       <Html
         position={[0, 15, 0]}
         center
         sprite
+        zIndexRange={[90, 0]} // ✅ 新增：確保標籤不會被建築物遮得很嚴重
         style={{
           background: hovered
             ? `rgba(255, 105, 180, ${freshness * 0.95})`
@@ -141,14 +127,16 @@ const PhotoMarker: React.FC<PhotoMarkerProps> = ({
         📷 照片 #{totalPhotos - photoIndex}
       </Html>
 
-      {/* 滑鼠懸停時顯示照片預覽 */}
+      {/* 懸浮預覽視窗 */}
       {showPreview && (
         <Html
           position={[0, 30, 0]}
           center
+          zIndexRange={[100, 0]} // ✅ 新增：讓預覽視窗永遠顯示在最上層
           style={{
             pointerEvents: 'none',
             userSelect: 'none',
+            zIndex: 99999, // CSS 層級保險
           }}
         >
           <div
@@ -162,9 +150,9 @@ const PhotoMarker: React.FC<PhotoMarkerProps> = ({
               flexDirection: 'column',
               alignItems: 'center',
               gap: '8px',
+              minWidth: '220px', // 固定最小寬度，避免太窄
             }}
           >
-            {/* 照片預覽 */}
             <img
               src={`https://backend.simworld.website${photoUrl}`}
               alt="Photo preview"
@@ -175,6 +163,7 @@ const PhotoMarker: React.FC<PhotoMarkerProps> = ({
                 borderRadius: '8px',
                 border: '2px solid #ffa500',
                 opacity: 1.0,
+                backgroundColor: '#333' // 載入前顯示深色背景
               }}
               onError={(e) => {
                 console.error('❌ 照片載入失敗:', photoUrl)
@@ -182,26 +171,23 @@ const PhotoMarker: React.FC<PhotoMarkerProps> = ({
               }}
             />
             
-            {/* 時間戳記 + 球體亮度資訊 + 經緯度 */}
             <div
               style={{
                 color: '#ffa500',
                 fontSize: '12px',
                 fontFamily: 'monospace',
                 textAlign: 'center',
+                width: '100%'
               }}
             >
-              {/* 時間戳記 */}
-              <div>{formatTimestamp(timestamp)}</div>
+              <div style={{ fontWeight: 'bold', marginBottom: '4px' }}>{formatTimestamp(timestamp)}</div>
               
-              {/* 球體亮度 */}
-              <div style={{ marginTop: '4px', fontSize: '10px', color: '#ffcc00' }}>
-                💡 球體亮度: {(freshness * 100).toFixed(0)}% ({photoIndex + 1}/{totalPhotos})
+              <div style={{ fontSize: '10px', color: '#ffcc00' }}>
+                💡 亮度: {(freshness * 100).toFixed(0)}% ({photoIndex + 1}/{totalPhotos})
               </div>
               
-              {/* ✅ 經緯度 */}
               <div style={{ marginTop: '4px', fontSize: '10px', color: '#66ff66' }}>
-                📍 GPS: {formatGPS(latitude, longitude)}
+                📍 {formatGPS(latitude, longitude)}
               </div>
             </div>
           </div>

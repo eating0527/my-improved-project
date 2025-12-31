@@ -32,6 +32,9 @@ interface UserLocationProps {
   selectedDeviceId?: string | null
   onSelectedDeviceIdChange?: (deviceId: string) => void
   onAllDevicesUpdate?: (devices: Map<string, any>) => void
+  
+  // ✅ 1. 新增：接收照片通知的 Callback (用來通知 App)
+  onPhotoReceived?: (photoData: any) => void
 }
 
 // GPS 資料的完整型別定義
@@ -60,6 +63,9 @@ export default function UserLocation({
   selectedDeviceId: propSelectedDeviceId,
   onSelectedDeviceIdChange,
   onAllDevicesUpdate,
+  
+  // ✅ 2. 接住這個 prop
+  onPhotoReceived,
 }: UserLocationProps) {
   const upsertRef = useRef(upsertDevice)
   const [locationStatus, setLocationStatus] = useState<string>("")
@@ -84,11 +90,11 @@ export default function UserLocation({
     myDeviceId,
     deviceName,
     updateDeviceName,
-    allDevices,
+    allDevices, // ✅ 這裡已經包含了從 WebSocket 收到的所有人位置
     myGPS,
     clearPathTrigger, 
     sendClearPath,
-    photoUploadEvent,
+    photoUploadEvent, // 這裡也有 photoUploadEvent
     photoDeleteEvent
   } = useGPSSync(localGPS)
   
@@ -96,6 +102,30 @@ export default function UserLocation({
   const updateTimeoutRef = useRef<NodeJS.Timeout | null>(null)
   const allDevicesUpdateTimeoutRef = useRef<NodeJS.Timeout | null>(null)
   
+  // ✅ 3. 🔥 關鍵修改：收到照片上傳事件時，通知 App
+  useEffect(() => {
+    if (photoUploadEvent) {
+      console.log("📸 [UserLocation] 收到照片，轉發給 App:", photoUploadEvent.filename)
+      
+      // 1. 自己顯示 (原本邏輯)
+      setCurrentPhoto(photoUploadEvent.url)
+      
+      // 2. 通知 App 更新全域狀態 (新增邏輯)
+      if (onPhotoReceived) {
+        onPhotoReceived(photoUploadEvent)
+      }
+    }
+  }, [photoUploadEvent, onPhotoReceived])
+
+  // ✅ 4. 🔥 關鍵修改：收到照片刪除事件時，通知 App
+  useEffect(() => {
+    if (photoDeleteEvent && onPhotoReceived) {
+        console.log("🗑️ [UserLocation] 收到刪除通知，轉發給 App")
+        // 補上 type 讓 App 知道這是刪除事件
+        onPhotoReceived({ ...photoDeleteEvent, type: 'photo_deleted' })
+    }
+  }, [photoDeleteEvent, onPhotoReceived])
+
   useEffect(() => {
     setTempName(deviceName)
   }, [deviceName])
@@ -124,9 +154,7 @@ export default function UserLocation({
   
   const selectedDeviceId = propSelectedDeviceId || localSelectedDeviceId
   
-  // 🔥 我已經幫你刪除了那個會誤殺裝置的 useEffect
-  
-  // 處理裝置斷線 (這是正確的邏輯，保留)
+  // 處理裝置斷線
   useEffect(() => {
     const currentDeviceIds = new Set(allDevices.keys())
     const prevDeviceIds = prevDevicesRef.current
@@ -170,7 +198,7 @@ export default function UserLocation({
     }
   }) 
   
-  // --- 更新多裝置位置 ---
+  // --- 🔥 關鍵：更新多裝置位置 (這就是讓手機看到別人的關鍵) ---
   useEffect(() => {
     if (!onMultiDevicePositionUpdate) return
     if (allDevices.size === 0) return
@@ -179,10 +207,13 @@ export default function UserLocation({
       clearTimeout(updateTimeoutRef.current)
     }
 
+    // 使用極短的 debounce，確保資料快速傳遞
     updateTimeoutRef.current = setTimeout(() => {
       allDevices.forEach((device, deviceId) => {
+        // 排除無效座標
         if (device.lat === 0 && device.lon === 0) return
 
+        // 轉換經緯度為 3D 座標
         const [east, north, up] = latLonToENU(
           device.lat,
           device.lon,
@@ -194,6 +225,8 @@ export default function UserLocation({
         const safeY = Math.max(up * scale, 10)
         const position: [number, number, number] = [east * scale, safeY, north * scale]
 
+        // 向上層回報：這個裝置現在在哪裡
+        // App.tsx 收到後會更新 allDevicePositions，進而觸發 MainScene 渲染
         onMultiDevicePositionUpdate(
           deviceId,
           position,
@@ -204,14 +237,14 @@ export default function UserLocation({
           device.alt
         )
       })
-    }, 300) 
+    }, 150) // 稍微縮短更新間隔，讓動畫更流暢
 
     return () => {
       if (updateTimeoutRef.current) {
         clearTimeout(updateTimeoutRef.current)
       }
     }
-  }) 
+  }) // 移除依賴陣列，確保每次 allDevices 變動都執行
 
   // 計算 selectedGPS
   const selectedGPS = useMemo<GPSData>(() => {
@@ -317,12 +350,6 @@ export default function UserLocation({
       onClearPath()
     }
   }, [clearPathTrigger, onClearPath])
-
-  useEffect(() => {
-    if (photoUploadEvent) {
-      setCurrentPhoto(photoUploadEvent.url)
-    }
-  }, [photoUploadEvent])
 
   function calcDistance(lat1: number, lon1: number, lat2: number, lon2: number): number {
     const R = 6378137

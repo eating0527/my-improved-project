@@ -185,7 +185,7 @@ function App({ activeView }: AppProps) {
     return () => clearTimeout(timer)
   }, [])
 
-  // ✅ 載入照片資料
+  // ✅ 載入照片資料 (初始載入)
   useEffect(() => {
     const fetchPhotos = async () => {
       try {
@@ -202,6 +202,35 @@ function App({ activeView }: AppProps) {
 
     fetchPhotos()
   }, [])
+
+  // 🔥🔥🔥 關鍵修正：這裡原本有一個 WebSocket，我們刪除了！
+  // 現在改用下面的 callback 來接收 UserLocation 傳來的照片事件
+
+  // ✅ 新增：處理從 UserLocation 傳來的照片事件 (接力成功！)
+  const handlePhotoReceivedFromUserLocation = useCallback((photoData: any) => {
+    // 1. 處理刪除
+    if (photoData.type === 'photo_deleted') {
+       console.log('🗑️ [App] 從 UserLocation 收到刪除通知:', photoData.filename);
+       setPhotos(prev => prev.filter(p => !p.url.includes(photoData.filename)));
+       return;
+    }
+
+    // 2. 處理上傳
+    console.log('🔥 [App] 從 UserLocation 收到新照片:', photoData.url);
+    const newPhoto = {
+      url: photoData.url,
+      timestamp: photoData.timestamp,
+      latitude: photoData.latitude,
+      longitude: photoData.longitude,
+      altitude: photoData.altitude
+    };
+
+    setPhotos(prev => {
+      // 避免重複添加
+      if (prev.some(p => p.url === newPhoto.url)) return prev;
+      return [newPhoto, ...prev];
+    });
+  }, []);
 
   // ✅ 載入 USRP 資料
   useEffect(() => {
@@ -534,14 +563,7 @@ function App({ activeView }: AppProps) {
   const handleAllDevicesUpdate = useCallback((devices: Map<string, any>) => {
     console.log('📱 App 接收到 allDevices 更新，原始裝置數:', devices.size)
     
-    // 🔍 Debug: 印出所有收到的裝置內容
-    devices.forEach((d, id) => {
-        // 可以打開這行檢查
-        // console.log(`📡 [App] 收到裝置 ${id.substring(0, 6)}: Lat=${d.lat}, Lon=${d.lon}`)
-    })
-
     // ✅ 改為：直接接收所有裝置，不做過濾
-    // 讓 Navbar 自己決定怎麼顯示（顯示 0.0m 也比直接消失好）
     setGpsAllDevices(new Map(devices))
     
   }, [])
@@ -677,6 +699,7 @@ function App({ activeView }: AppProps) {
     <>
       {isSceneReady ? (
         <>
+          {/* ✅✅✅ 最關鍵的修改：這裡傳入了 onPhotoReceived */}
           <UserLocation
             origin={origin}
             scale={scale}
@@ -692,6 +715,9 @@ function App({ activeView }: AppProps) {
             selectedDeviceId={selectedDeviceId}
             onSelectedDeviceIdChange={handleDeviceSelect}
             onAllDevicesUpdate={handleAllDevicesUpdate}
+            
+            // 🔥🔥 接上對講機：處理從 UserLocation 轉傳過來的照片
+            onPhotoReceived={handlePhotoReceivedFromUserLocation}
           />
 
           <TxInterferenceLocation

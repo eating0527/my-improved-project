@@ -1,4 +1,4 @@
-import { Suspense, useRef, useCallback, useEffect, useState } from 'react'
+import { Suspense, useRef, useCallback, useEffect } from 'react'
 import { Canvas } from '@react-three/fiber'
 import { ContactShadows, OrbitControls } from '@react-three/drei'
 import * as THREE from 'three'
@@ -93,7 +93,7 @@ export default function SceneView({
     sceneName,
     uavPath = [],
     uavPosition = [0, 10, 0],
-    photos: initialPhotos = [],
+    photos = [], // ✅ 直接使用 props 傳進來的 photos (由 App.tsx 管理)
     origin,
     scale,
     usrpData = [],
@@ -105,81 +105,18 @@ export default function SceneView({
 }: SceneViewProps) {
     const canvasRef = useRef<HTMLCanvasElement>(null)
     
-    const [photos, setPhotos] = useState(initialPhotos)
+    // ❌ 移除本地 state，直接用 props
+    // const [photos, setPhotos] = useState(initialPhotos)
     
-    useEffect(() => {
-        setPhotos(initialPhotos)
-    }, [initialPhotos])
-
+    // ❌ 移除這段 WebSocket 連線 (已移至 App.tsx)
+    /*
     useEffect(() => {
         let ws: WebSocket | null = null
-        
-        const connectWebSocket = () => {
-            try {
-                ws = new WebSocket('wss://backend.simworld.website/ws/gps')
-                
-                ws.onopen = () => {
-                    console.log('✅ StereogramView WebSocket 連線成功')
-                }
-                
-                ws.onmessage = (event) => {
-                    try {
-                        const data = JSON.parse(event.data)
-                        
-                        if (data.type === 'photo-upload') {
-                            console.log('📸 StereogramView 收到照片上傳事件:', data)
-                            const newPhoto = {
-                                url: data.url,
-                                timestamp: data.timestamp,
-                                latitude: data.latitude,
-                                longitude: data.longitude,
-                                altitude: data.altitude
-                            }
-                            setPhotos(prevPhotos => {
-                                const exists = prevPhotos.some(p => p.url === newPhoto.url)
-                                if (exists) return prevPhotos
-                                return [newPhoto, ...prevPhotos]
-                            })
-                        }
-                        
-                        if (data.type === 'photo_deleted') {
-                            console.log('🗑️ StereogramView 收到照片刪除事件:', data)
-                            setPhotos(prevPhotos => 
-                                prevPhotos.filter(photo => !photo.url.includes(data.filename))
-                            )
-                        }
-                        
-                    } catch (error) {
-                        console.error('❌ StereogramView 解析 WebSocket 訊息失敗:', error)
-                    }
-                }
-                
-                ws.onerror = (error) => {
-                    console.error('❌ StereogramView WebSocket 錯誤:', error)
-                }
-                
-                ws.onclose = () => {
-                    console.log('🔌 StereogramView WebSocket 連線關閉')
-                    setTimeout(() => {
-                        console.log('🔄 嘗試重新連線 WebSocket...')
-                        connectWebSocket()
-                    }, 3000)
-                }
-                
-            } catch (error) {
-                console.error('❌ StereogramView WebSocket 連線失敗:', error)
-            }
-        }
-        
+        const connectWebSocket = () => { ... }
         connectWebSocket()
-        
-        return () => {
-            if (ws) {
-                console.log('🔌 關閉 StereogramView WebSocket 連線')
-                ws.close()
-            }
-        }
+        return () => { ... }
     }, [])
+    */
 
     const handleWebGLContextLost = useCallback((event: Event) => {
         console.warn('WebGL 上下文丟失，嘗試恢復...')
@@ -268,7 +205,7 @@ export default function SceneView({
                         sceneName={sceneName}
                         uavPath={uavPath}
                         uavPosition={uavPosition}
-                        photos={photos}
+                        photos={photos} // ✅ 這裡傳遞的是最新的 photos prop
                         origin={origin}
                         scale={scale}
                         usrpData={usrpData}

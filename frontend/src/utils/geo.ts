@@ -8,12 +8,13 @@ export type GeoOrigin = {
  * ENU 原點（地圖中心的經緯度）
  */
 
-export const ENU_ORIGIN = {
+/*export const ENU_ORIGIN = {
   lat: 24.942349,
   lon: 121.367164,
   alt: 0
-};
-/*export const ENU_ORIGIN = {
+};*/
+
+export const ENU_ORIGIN = {
   lat: 24.967068,
   lon: 121.539574,
   alt: 0
