@@ -33,8 +33,18 @@ interface UserLocationProps {
   onSelectedDeviceIdChange?: (deviceId: string) => void
   onAllDevicesUpdate?: (devices: Map<string, any>) => void
   
-  // ✅ 1. 新增：接收照片通知的 Callback (用來通知 App)
+  // 1. 接收照片通知的 Callback
   onPhotoReceived?: (photoData: any) => void
+  
+  // ✅ 2. 接收來自 App 的照片清單
+  photos?: Array<{
+    url: string
+    timestamp: string
+    latitude?: number | null
+    longitude?: number | null
+    altitude?: number | null
+    deviceId?: string
+  }>
 }
 
 // GPS 資料的完整型別定義
@@ -64,8 +74,10 @@ export default function UserLocation({
   onSelectedDeviceIdChange,
   onAllDevicesUpdate,
   
-  // ✅ 2. 接住這個 prop
   onPhotoReceived,
+  
+  // ✅ 3. 接住照片清單，預設為空陣列
+  photos = [], 
 }: UserLocationProps) {
   const upsertRef = useRef(upsertDevice)
   const [locationStatus, setLocationStatus] = useState<string>("")
@@ -90,11 +102,11 @@ export default function UserLocation({
     myDeviceId,
     deviceName,
     updateDeviceName,
-    allDevices, // ✅ 這裡已經包含了從 WebSocket 收到的所有人位置
+    allDevices, 
     myGPS,
     clearPathTrigger, 
     sendClearPath,
-    photoUploadEvent, // 這裡也有 photoUploadEvent
+    photoUploadEvent, 
     photoDeleteEvent
   } = useGPSSync(localGPS)
   
@@ -102,26 +114,36 @@ export default function UserLocation({
   const updateTimeoutRef = useRef<NodeJS.Timeout | null>(null)
   const allDevicesUpdateTimeoutRef = useRef<NodeJS.Timeout | null>(null)
   
-  // ✅ 3. 🔥 關鍵修改：收到照片上傳事件時，通知 App
+  // ✅ 關鍵修改：修正照片來源 ID 判斷邏輯
   useEffect(() => {
     if (photoUploadEvent) {
-      console.log("📸 [UserLocation] 收到照片，轉發給 App:", photoUploadEvent.filename)
+      const rawEvent = photoUploadEvent as any;
+      console.log("📸 [UserLocation] 收到照片事件:", rawEvent)
       
-      // 1. 自己顯示 (原本邏輯)
+      // 嘗試抓取各種可能的 ID 欄位
+      const incomingId = rawEvent.deviceId || rawEvent.device_id || rawEvent.senderId;
+
+      console.log(`🧐 ID 檢查: 來源ID=${incomingId}, 本機ID=${myDeviceId}`);
+      
+      // 1. 自己顯示
       setCurrentPhoto(photoUploadEvent.url)
       
-      // 2. 通知 App 更新全域狀態 (新增邏輯)
+      // 2. 通知 App
       if (onPhotoReceived) {
-        onPhotoReceived(photoUploadEvent)
+        onPhotoReceived({
+            ...photoUploadEvent,
+            // 🔥 重點：只使用 incomingId。如果它是 undefined，就保持 undefined。
+            // 這樣 MainScene 才會顯示橘色，讓你知道後端沒傳 ID，而不是錯誤地顯示成本機顏色。
+            deviceId: incomingId 
+        })
       }
     }
-  }, [photoUploadEvent, onPhotoReceived])
+  }, [photoUploadEvent, onPhotoReceived, myDeviceId])
 
-  // ✅ 4. 🔥 關鍵修改：收到照片刪除事件時，通知 App
+  // 4. 監聽照片刪除事件
   useEffect(() => {
     if (photoDeleteEvent && onPhotoReceived) {
-        console.log("🗑️ [UserLocation] 收到刪除通知，轉發給 App")
-        // 補上 type 讓 App 知道這是刪除事件
+        console.log("🗑️ [UserLocation] 收到刪除通知")
         onPhotoReceived({ ...photoDeleteEvent, type: 'photo_deleted' })
     }
   }, [photoDeleteEvent, onPhotoReceived])
@@ -198,7 +220,7 @@ export default function UserLocation({
     }
   }) 
   
-  // --- 🔥 關鍵：更新多裝置位置 (這就是讓手機看到別人的關鍵) ---
+  // --- 更新多裝置位置 ---
   useEffect(() => {
     if (!onMultiDevicePositionUpdate) return
     if (allDevices.size === 0) return
@@ -207,13 +229,10 @@ export default function UserLocation({
       clearTimeout(updateTimeoutRef.current)
     }
 
-    // 使用極短的 debounce，確保資料快速傳遞
     updateTimeoutRef.current = setTimeout(() => {
       allDevices.forEach((device, deviceId) => {
-        // 排除無效座標
         if (device.lat === 0 && device.lon === 0) return
 
-        // 轉換經緯度為 3D 座標
         const [east, north, up] = latLonToENU(
           device.lat,
           device.lon,
@@ -225,8 +244,6 @@ export default function UserLocation({
         const safeY = Math.max(up * scale, 10)
         const position: [number, number, number] = [east * scale, safeY, north * scale]
 
-        // 向上層回報：這個裝置現在在哪裡
-        // App.tsx 收到後會更新 allDevicePositions，進而觸發 MainScene 渲染
         onMultiDevicePositionUpdate(
           deviceId,
           position,
@@ -237,14 +254,14 @@ export default function UserLocation({
           device.alt
         )
       })
-    }, 150) // 稍微縮短更新間隔，讓動畫更流暢
+    }, 150)
 
     return () => {
       if (updateTimeoutRef.current) {
         clearTimeout(updateTimeoutRef.current)
       }
     }
-  }) // 移除依賴陣列，確保每次 allDevices 變動都執行
+  }) 
 
   // 計算 selectedGPS
   const selectedGPS = useMemo<GPSData>(() => {
@@ -708,7 +725,12 @@ export default function UserLocation({
         </div>
       </div>
 
-      <PhotoHistory onPhotoClick={(url) => setCurrentPhoto(url)} photoDeleteEvent={photoDeleteEvent} />
+      {/* 4. 把 photos 傳遞給 PhotoHistory */}
+      <PhotoHistory 
+        photos={photos} 
+        onPhotoClick={(url) => setCurrentPhoto(url)} 
+        photoDeleteEvent={photoDeleteEvent} 
+      />
       <PhotoViewer photoUrl={currentPhoto} onClose={handleClosePhoto} autoCloseTime={10000} />
     </>
   )

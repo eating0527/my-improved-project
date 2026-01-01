@@ -395,21 +395,22 @@ async def gps_health_check():
         "timestamp": datetime.now().isoformat()
     }
 
-# ✅ 修改：照片上傳 API（使用實際時間戳記）
+# ✅ 修正：照片上傳 API（新增 deviceId 支援）
 @app.post("/api/upload-photo", tags=["Photo Upload"])
 async def upload_photo(
     photo: UploadFile = File(...),
     latitude: Optional[float] = Form(None),
     longitude: Optional[float] = Form(None),
-    altitude: Optional[float] = Form(None)
+    altitude: Optional[float] = Form(None),
+    # 🔥 新增：接收前端傳來的 deviceId
+    deviceId: Optional[str] = Form(None) 
 ):
-    """接收照片並儲存到本地資料夾，並通過 WebSocket 廣播（包含 GPS 座標和實際時間）"""
+    """接收照片並儲存到本地資料夾，並通過 WebSocket 廣播（包含 GPS 座標、實際時間和裝置 ID）"""
     try:
         logger.info(f"📦 接收到上傳請求")
         logger.info(f"  照片: {photo.filename}")
-        logger.info(f"  latitude: {latitude} (type: {type(latitude)})")
-        logger.info(f"  longitude: {longitude} (type: {type(longitude)})")
-        logger.info(f"  altitude: {altitude} (type: {type(altitude)})")
+        logger.info(f"  deviceId: {deviceId}") # 🔍 記錄一下有沒有收到
+        logger.info(f"  GPS: {latitude}, {longitude}, {altitude}")
         
         MAX_FILE_SIZE = 10 * 1024 * 1024
         content = await photo.read()
@@ -433,7 +434,7 @@ async def upload_photo(
 
         logger.info(
             f"✅ 照片已上傳: {file_path}, "
-            f"時間: {timestamp}, "
+            f"ID: {deviceId}, "
             f"GPS: lat={gps_lat}, lon={gps_lon}, alt={gps_alt}"
         )
 
@@ -443,7 +444,8 @@ async def upload_photo(
             "timestamp": timestamp,
             "latitude": gps_lat,
             "longitude": gps_lon,
-            "altitude": gps_alt
+            "altitude": gps_alt,
+            "deviceId": deviceId # 🔥 關鍵：把 ID 存進去！
         }
         
         photos_list = []
@@ -470,7 +472,8 @@ async def upload_photo(
             "timestamp": timestamp,
             "latitude": gps_lat,
             "longitude": gps_lon,
-            "altitude": gps_alt
+            "altitude": gps_alt,
+            "deviceId": deviceId # 🔥 關鍵：廣播時也要帶上 ID！
         }
         
         await gps_manager.broadcast_to_all(json.dumps(photo_message))
@@ -484,7 +487,8 @@ async def upload_photo(
             "timestamp": timestamp,
             "latitude": gps_lat,
             "longitude": gps_lon,
-            "altitude": gps_alt
+            "altitude": gps_alt,
+            "deviceId": deviceId # 回傳也帶上，雖然前端可能用不到
         })
     except Exception as e:
         logger.error(f"❌ 照片上傳失敗: {str(e)}")

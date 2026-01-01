@@ -18,8 +18,10 @@ import PhotoMarker from '../PhotoMarker'
 import USRPMarker from '../USRPMarker'
 import { latLonToENU } from '../../utils/geo'
 
-// 🎨 簡易 Hash 函式：根據字串產生固定的顏色索引
+// ✅ 1. 簡易 Hash 函式：根據字串產生固定的顏色索引
 const getHashColor = (str: string, colors: string[]) => {
+  if (!str) return '#ffa500' // 如果沒有 ID，預設橘色
+  
   let hash = 0
   for (let i = 0; i < str.length; i++) {
     hash = str.charCodeAt(i) + ((hash << 5) - hash)
@@ -49,6 +51,7 @@ export interface MainSceneProps {
     latitude?: number | null
     longitude?: number | null
     altitude?: number | null
+    deviceId?: string // ✅ 接收 deviceId
   }>
   origin?: { lat: number; lon: number; alt: number }
   scale?: number
@@ -73,7 +76,6 @@ export interface MainSceneProps {
     accuracy: number
   }>
   myDeviceId?: string | null
-  // ✅ 新增這兩個 props
   devicePaths?: Map<string, Array<{ x: number; y: number; z: number }>>
   deviceColors?: string[]
 }
@@ -88,7 +90,7 @@ const MainScene: React.FC<MainSceneProps> = ({
   selectedReceiverIds = [],
   satellites = [],
   sceneName,
-  uavPath = [], // 這是單機模式用的，為了相容性保留
+  uavPath = [],
   uavPosition = [0, 10, 0],
   photos = [],
   origin,
@@ -96,7 +98,6 @@ const MainScene: React.FC<MainSceneProps> = ({
   usrpData = [],
   allDevicePositions,
   myDeviceId,
-  // ✅ 預設顏色庫
   devicePaths,
   deviceColors = ['#00ff00', '#ff0000', '#0000ff', '#ffff00', '#00ffff'],
 }) => {
@@ -391,11 +392,9 @@ const MainScene: React.FC<MainSceneProps> = ({
     })
   }, [devices, BS_MODEL_URL, JAMMER_MODEL_URL, isMouseStill])
 
-  // --- 💡 關鍵修正：統一所有裝置的渲染邏輯 (包含手機自己) ---
   const allDevicesUAVs = useMemo(() => {
     let devicesToRender: any[] = []
 
-    // 1. 如果有外部裝置 (從 UserLocation 傳來)，優先使用
     if (allDevicePositions && allDevicePositions.size > 0) {
       devicesToRender = Array.from(allDevicePositions.entries()).map(([id, device]) => ({
         ...device,
@@ -403,7 +402,6 @@ const MainScene: React.FC<MainSceneProps> = ({
         isMe: id === myDeviceId
       }))
     } else {
-      // 2. 如果暫時沒有裝置清單，使用 props 傳進來的 uavPosition 渲染「自己」
       devicesToRender = [{
         id: myDeviceId || 'self',
         position: uavPosition,
@@ -479,15 +477,50 @@ const MainScene: React.FC<MainSceneProps> = ({
     })
   }, [allDevicePositions, myDeviceId, isMouseStill, uavPosition])
 
+  // 🔥🔥🔥 關鍵新邏輯：計算每張照片在「該裝置」中的排名
+  // 這樣不同裝置的照片亮度就會分開計算，互不影響
+  const processedPhotos = useMemo(() => {
+    if (!photos || photos.length === 0) return []
+
+    // 1. 先把照片依據 deviceId 分組
+    const groups: { [key: string]: typeof photos } = {}
+    
+    // 為了安全起見，先複製一份並按時間排序（舊到新），這樣 index 越大代表越新
+    const sortedPhotos = [...photos].sort((a, b) => 
+      (a.timestamp || '').localeCompare(b.timestamp || '')
+    )
+
+    sortedPhotos.forEach(photo => {
+      const id = photo.deviceId || 'unknown'
+      if (!groups[id]) groups[id] = []
+      groups[id].push(photo)
+    })
+
+    // 2. 遍歷原始 photos，找出它在自己組別裡的 index 和該組總數
+    return photos.map(photo => {
+      const id = photo.deviceId || 'unknown'
+      const groupList = groups[id]
+      
+      // 找出這張照片在該裝置清單中的排名 (0 是最舊，length-1 是最新)
+      const myIndex = groupList.findIndex(p => p.url === photo.url)
+      const myTotal = groupList.length
+
+      return {
+        ...photo,
+        // 這些是用來算亮度的參數
+        devicePhotoIndex: myIndex, 
+        deviceTotalPhotos: myTotal
+      }
+    })
+  }, [photos])
+
   return (
     <>
       <primitive object={prepared} castShadow receiveShadow />
       {deviceMeshes}
       <SatelliteManager satellites={satellites} />
       
-      {/* 1. 單機模式的軌跡 (uavPath) 
-          如果你只連一台裝置且沒有用 devicePaths，會顯示這條 
-      */}
+      {/* 1. 單機模式的軌跡 (uavPath) */}
       {uavPath && uavPath.length > 1 && !devicePaths && (
         <UAVPath 
           path={uavPath} 
@@ -496,15 +529,10 @@ const MainScene: React.FC<MainSceneProps> = ({
         />
       )}
 
-      {/* 2. ✅ 多機模式的彩色軌跡 (devicePaths)
-          遍歷所有裝置的軌跡並渲染 
-      */}
+      {/* 2. ✅ 多機模式的彩色軌跡 (devicePaths) */}
       {devicePaths && Array.from(devicePaths.entries()).map(([deviceId, path]) => {
         if (path.length < 2) return null
-        
-        // 根據 Device ID 取得固定顏色
         const pathColor = getHashColor(deviceId, deviceColors)
-        
         return (
           <UAVPath 
             key={`path-${deviceId}`} 
@@ -515,9 +543,10 @@ const MainScene: React.FC<MainSceneProps> = ({
         )
       })}
 
-      {origin && scale && photos.length > 0 && (
+      {/* ✅ 3. 渲染照片球體 (帶顏色 + 獨立亮度計算) */}
+      {origin && scale && processedPhotos.length > 0 && (
         <>
-          {photos.map((photo, index) => {
+          {processedPhotos.map((photo, index) => {
             if (!photo.latitude || !photo.longitude) return null
 
             const [east, north, up] = latLonToENU(
@@ -532,16 +561,24 @@ const MainScene: React.FC<MainSceneProps> = ({
             const z = north * scale
             const y = Math.max(up * scale, 10)
 
+            // 計算顏色
+            const photoColor = getHashColor(photo.deviceId || '', deviceColors)
+
             return (
               <PhotoMarker
                 key={`photo-${index}`}
                 position={[x, y, z]}
                 photoUrl={photo.url}
                 timestamp={photo.timestamp}
-                photoIndex={index}
-                totalPhotos={photos.length}
+                
+                // ✅ 關鍵修改：傳入該裝置專屬的排名
+                // 這樣 PhotoMarker 算出來的 freshness 就是針對該裝置的
+                photoIndex={photo.devicePhotoIndex}
+                totalPhotos={photo.deviceTotalPhotos}
+                
                 latitude={photo.latitude}
                 longitude={photo.longitude}
+                color={photoColor}
                 onClick={() => {
                   console.log('📸 點擊照片:', photo.url)
                 }}
@@ -589,7 +626,6 @@ const MainScene: React.FC<MainSceneProps> = ({
         </>
       )}
 
-      {/* 渲染所有裝置模型 (UAVs) */}
       {allDevicesUAVs}
     </>
   )

@@ -1,91 +1,119 @@
 import { useEffect, useState } from 'react'
 
+// 定義照片的格式
 interface Photo {
   filename: string
   url: string
   timestamp: string
+  deviceId?: string
 }
 
 interface PhotoHistoryProps {
   onPhotoClick?: (photoUrl: string) => void
   photoDeleteEvent?: { filename: string; timestamp: string } | null
   photoUploadEvent?: { url: string; filename: string; timestamp: string } | null
+  
+  // ✅ 新增這個 prop：接收外部傳入的照片清單
+  photos?: Array<{
+    url: string
+    timestamp: string
+    latitude?: number | null
+    longitude?: number | null
+    altitude?: number | null
+    deviceId?: string
+  }>
 }
 
 export default function PhotoHistory({ 
   onPhotoClick, 
   photoDeleteEvent,
-  photoUploadEvent
+  photoUploadEvent,
+  photos: externalPhotos // 把傳進來的 props 改個名，方便內部區分
 }: PhotoHistoryProps) {
-  const [photos, setPhotos] = useState<Photo[]>([])
+  // 內部狀態 (如果沒有外部資料時才用，作為備案)
+  const [internalPhotos, setInternalPhotos] = useState<Photo[]>([])
   const [loading, setLoading] = useState(true)
   const [error, setError] = useState<string | null>(null)
   const [isExpanded, setIsExpanded] = useState(false)
   const [deletingPhoto, setDeletingPhoto] = useState<string | null>(null)
 
+  // 🔥 決定要顯示哪一份資料：如果有外部傳入的(來自App)，就用外部的；否則用內部的
+  const photosToDisplay = externalPhotos && externalPhotos.length > 0 
+    ? externalPhotos.map(p => ({
+        filename: p.url.split('/').pop() || '', 
+        url: p.url,
+        timestamp: p.timestamp,
+        deviceId: p.deviceId
+      }))
+    : internalPhotos
+
+  // ✅ 如果有收到外部資料，就直接停止 loading，並清除錯誤訊息
   useEffect(() => {
-    fetchPhotoHistory()
+    if (externalPhotos) {
+      setLoading(false)
+      setError(null)
+    }
+  }, [externalPhotos])
+
+  // 初始化：只有在「沒有」外部資料時，才自己去 fetch
+  useEffect(() => {
+    if (!externalPhotos) {
+      fetchPhotoHistory()
+    } else {
+      setLoading(false) // 有外部資料就不需要 loading
+    }
   }, [])
 
+  // 處理新照片上傳 (主要是為了自動展開視窗)
   useEffect(() => {
     if (photoUploadEvent) {
       console.log('📸 PhotoHistory 收到上傳事件:', photoUploadEvent)
       
-      setPhotos(prevPhotos => {
-        const exists = prevPhotos.some(p => p.filename === photoUploadEvent.filename)
-        if (exists) {
-          console.log('⚠️ 照片已存在，不重複新增:', photoUploadEvent.filename)
-          return prevPhotos
-        }
-        
-        const newPhoto: Photo = {
-          filename: photoUploadEvent.filename,
-          url: photoUploadEvent.url,
-          timestamp: photoUploadEvent.timestamp
-        }
-        
-        console.log(`✅ 已將照片新增到列表: ${photoUploadEvent.filename}，總數 ${prevPhotos.length + 1} 張`)
-        return [newPhoto, ...prevPhotos]
-      })
+      // 如果是用內部狀態，才需要自己更新 (外部資料會由 App 更新並透過 props 傳進來)
+      if (!externalPhotos) {
+        setInternalPhotos(prevPhotos => {
+          const exists = prevPhotos.some(p => p.filename === photoUploadEvent.filename)
+          if (exists) return prevPhotos
+          
+          const newPhoto: Photo = {
+            filename: photoUploadEvent.filename,
+            url: photoUploadEvent.url,
+            timestamp: photoUploadEvent.timestamp
+          }
+          return [newPhoto, ...prevPhotos]
+        })
+      }
       
+      // ✅ 自動展開歷史記錄
       if (!isExpanded) {
         setIsExpanded(true)
-        console.log('📸 自動展開照片歷史記錄')
       }
     }
-  }, [photoUploadEvent, isExpanded])
+  }, [photoUploadEvent, isExpanded, externalPhotos])
 
+  // 處理刪除事件
   useEffect(() => {
-    if (photoDeleteEvent) {
-      console.log('🗑️ PhotoHistory 收到刪除事件:', photoDeleteEvent.filename)
-      
-      setPhotos(prevPhotos => {
-        const newPhotos = prevPhotos.filter(photo => photo.filename !== photoDeleteEvent.filename)
-        console.log(`✅ 已從列表中移除照片: ${photoDeleteEvent.filename}，剩餘 ${newPhotos.length} 張`)
-        return newPhotos
-      })
+    if (photoDeleteEvent && !externalPhotos) {
+      setInternalPhotos(prevPhotos => prevPhotos.filter(photo => photo.filename !== photoDeleteEvent.filename))
     }
-  }, [photoDeleteEvent])
+  }, [photoDeleteEvent, externalPhotos])
 
   const fetchPhotoHistory = async () => {
+    if (externalPhotos) return // 如果有爸爸給的資料，就不用自己抓了
+
     try {
       setLoading(true)
       const response = await fetch('https://backend.simworld.website/api/photo-history')
       const data = await response.json()
 
       if (data.success) {
-        setPhotos(data.photos)
-        console.log(`✅ 載入照片歷史記錄成功，共 ${data.count} 張照片`)
-        if (data.photos.length > 0) {
-          console.log('📅 第一張照片的 timestamp:', data.photos[0].timestamp)
-        }
+        setInternalPhotos(data.photos)
+        setError(null)
       } else {
         setError('無法載入照片歷史記錄')
-        console.error('❌ 照片歷史記錄載入失敗:', data.error)
       }
     } catch (err) {
       setError('網路錯誤，無法載入照片')
-      console.error('❌ 照片歷史記錄載入錯誤:', err)
     } finally {
       setLoading(false)
     }
@@ -100,28 +128,28 @@ export default function PhotoHistory({
 
     try {
       setDeletingPhoto(filename)
-      console.log('🗑️ 開始刪除照片:', filename)
-
       const response = await fetch(`https://backend.simworld.website/api/delete-photo/${filename}`, {
         method: 'DELETE'
       })
-
       const data = await response.json()
 
       if (data.success) {
         console.log('✅ 照片刪除成功:', filename)
-        setPhotos(photos.filter(photo => photo.filename !== filename))
+        // 如果是內部管理狀態，手動移除；如果是外部傳入，App 會透過 WebSocket 收到刪除通知並更新 props
+        if (!externalPhotos) {
+            setInternalPhotos(prev => prev.filter(photo => photo.filename !== filename))
+        }
       } else {
-        console.error('❌ 照片刪除失敗:', data.error)
         alert(`刪除失敗: ${data.error}`)
       }
     } catch (err) {
-      console.error('❌ 刪除照片錯誤:', err)
       alert('刪除失敗，請檢查網路連線')
     } finally {
       setDeletingPhoto(null)
     }
   }
+
+  const displayList = photosToDisplay
 
   return (
     <div style={{
@@ -137,7 +165,7 @@ export default function PhotoHistory({
       display: 'flex',
       flexDirection: 'column'
     }}>
-      {/* 標題欄 */}
+      {/* 標題列 */}
       <div style={{
         padding: '15px',
         backgroundColor: 'rgba(0, 0, 0, 0.95)',
@@ -157,7 +185,7 @@ export default function PhotoHistory({
         }}>
           <span>📸</span>
           <span>照片歷史記錄</span>
-          {!loading && <span style={{ fontSize: '14px', color: '#888' }}>({photos.length} 張)</span>}
+          <span style={{ fontSize: '14px', color: '#888' }}>({displayList.length} 張)</span>
         </div>
         
         <button
@@ -175,7 +203,7 @@ export default function PhotoHistory({
         </button>
       </div>
 
-      {/* 照片列表 */}
+      {/* 照片列表網格 */}
       <div style={{
         flex: 1,
         overflowY: 'auto',
@@ -186,23 +214,14 @@ export default function PhotoHistory({
         alignContent: 'start'
       }}>
         {loading && (
-          <div style={{ 
-            gridColumn: '1 / -1', 
-            textAlign: 'center', 
-            color: '#00ff00',
-            padding: '20px' 
-          }}>
+          <div style={{ gridColumn: '1 / -1', textAlign: 'center', color: '#00ff00', padding: '20px' }}>
             ⏳ 載入中...
           </div>
         )}
 
-        {error && (
-          <div style={{ 
-            gridColumn: '1 / -1', 
-            textAlign: 'center', 
-            color: '#ff4444',
-            padding: '20px' 
-          }}>
+        {/* 只有在沒有外部資料且內部發生錯誤時才顯示錯誤 */}
+        {error && !externalPhotos && (
+          <div style={{ gridColumn: '1 / -1', textAlign: 'center', color: '#ff4444', padding: '20px' }}>
             ❌ {error}
             <button
               onClick={fetchPhotoHistory}
@@ -224,18 +243,13 @@ export default function PhotoHistory({
           </div>
         )}
 
-        {!loading && !error && photos.length === 0 && (
-          <div style={{ 
-            gridColumn: '1 / -1', 
-            textAlign: 'center', 
-            color: '#888',
-            padding: '20px' 
-          }}>
+        {!loading && displayList.length === 0 && (
+          <div style={{ gridColumn: '1 / -1', textAlign: 'center', color: '#888', padding: '20px' }}>
             📭 尚無照片
           </div>
         )}
 
-        {!loading && !error && photos.map((photo, index) => (
+        {displayList.map((photo, index) => (
           <div
             key={photo.filename || index}
             style={{
@@ -243,7 +257,6 @@ export default function PhotoHistory({
               cursor: 'pointer',
               border: '2px solid #00ff00',
               borderRadius: '8px',
-              overflow: 'visible',
               backgroundColor: '#111',
               transition: 'transform 0.2s ease, box-shadow 0.2s ease',
               opacity: deletingPhoto === photo.filename ? 0.5 : 1,
@@ -282,17 +295,6 @@ export default function PhotoHistory({
                 alignItems: 'center',
                 justifyContent: 'center',
                 zIndex: 10,
-                transition: 'background 0.2s ease'
-              }}
-              onMouseEnter={(e) => {
-                if (deletingPhoto !== photo.filename) {
-                  e.currentTarget.style.background = 'rgba(255, 0, 0, 1)'
-                }
-              }}
-              onMouseLeave={(e) => {
-                if (deletingPhoto !== photo.filename) {
-                  e.currentTarget.style.background = 'rgba(255, 0, 0, 0.8)'
-                }
               }}
             >
               {deletingPhoto === photo.filename ? '⏳' : '🗑️'}
@@ -305,17 +307,15 @@ export default function PhotoHistory({
                 width: '100%',
                 height: '140px',
                 objectFit: 'cover',
-                flexShrink: 0,
                 borderTopLeftRadius: '6px',
                 borderTopRightRadius: '6px'
               }}
             />
             
-            {/* ✅ 修正後的時間戳記區域 */}
             <div style={{
-              padding: '15px 10px',
-              minHeight: '70px',
-              fontSize: '13px',
+              padding: '10px',
+              minHeight: '60px',
+              fontSize: '12px',
               fontWeight: 'bold',
               color: '#ffffff',
               textAlign: 'center',
@@ -323,75 +323,28 @@ export default function PhotoHistory({
               backgroundColor: '#1a1a1a',
               display: 'flex',
               flexDirection: 'column',
-              alignItems: 'center',
               justifyContent: 'center',
-              gap: '5px',
-              whiteSpace: 'normal',
               fontFamily: 'monospace',
-              lineHeight: '1.5',
-              boxShadow: 'inset 0 2px 4px rgba(0, 0, 0, 0.3)'
             }}>
-              {/* ✅ 修正：正確處理底線分隔符 */}
               {(() => {
-                const timestamp = photo.timestamp
-                if (!timestamp) return <span>未知時間</span>
-                
-                // ✅ 移除底線，只保留數字
-                const cleanTimestamp = timestamp.replace(/_/g, '')
-                
-                console.log('🕐 原始 timestamp:', timestamp)
-                console.log('🕐 清理後 timestamp:', cleanTimestamp)
-                
-                if (cleanTimestamp.length >= 14) {
-                  const date = `${cleanTimestamp.substring(0, 4)}/${cleanTimestamp.substring(4, 6)}/${cleanTimestamp.substring(6, 8)}`
-                  const time = `${cleanTimestamp.substring(8, 10)}:${cleanTimestamp.substring(10, 12)}:${cleanTimestamp.substring(12, 14)}`
-                  
-                  console.log('📅 解析後日期:', date)
-                  console.log('🕐 解析後時間:', time)
-                  
-                  return (
-                    <>
-                      <div style={{ color: '#00ff00', fontSize: '14px' }}>📅 {date}</div>
-                      <div style={{ color: '#ffaa00', fontSize: '12px' }}>🕐 {time}</div>
-                    </>
-                  )
+                const ts = photo.timestamp || '';
+                const cleanTs = ts.replace(/_/g, '');
+                if (cleanTs.length >= 14) {
+                   const date = `${cleanTs.substring(0, 4)}/${cleanTs.substring(4, 6)}/${cleanTs.substring(6, 8)}`;
+                   const time = `${cleanTs.substring(8, 10)}:${cleanTs.substring(10, 12)}:${cleanTs.substring(12, 14)}`;
+                   return (
+                     <>
+                       <div style={{ color: '#00ff00' }}>{date}</div>
+                       <div style={{ color: '#ffaa00' }}>{time}</div>
+                     </>
+                   );
                 }
-                
-                if (cleanTimestamp.length >= 8) {
-                  const date = `${cleanTimestamp.substring(0, 4)}/${cleanTimestamp.substring(4, 6)}/${cleanTimestamp.substring(6, 8)}`
-                  return <div style={{ color: '#00ff00' }}>📅 {date}</div>
-                }
-                
-                return <span>未知時間</span>
+                return <span>{ts || '未知時間'}</span>;
               })()}
             </div>
           </div>
         ))}
       </div>
-
-      {!loading && !error && (
-        <div style={{
-          padding: '10px',
-          borderTop: '1px solid #00ff00',
-          textAlign: 'center'
-        }}>
-          <button
-            onClick={fetchPhotoHistory}
-            style={{
-              padding: '8px 20px',
-              background: '#00ff00',
-              color: 'black',
-              border: 'none',
-              borderRadius: '5px',
-              cursor: 'pointer',
-              fontSize: '14px',
-              fontWeight: 'bold'
-            }}
-          >
-            🔄 重新整理
-          </button>
-        </div>
-      )}
 
       <button
         onClick={() => setIsExpanded(!isExpanded)}

@@ -70,6 +70,7 @@ function App({ activeView }: AppProps) {
     latitude?: number | null
     longitude?: number | null
     altitude?: number | null
+    deviceId?: string // ✅ 新增：用來存拍照者的 ID
   }>>([])
 
   // ✅ USRP 資料狀態
@@ -113,8 +114,19 @@ function App({ activeView }: AppProps) {
     lastUpdateTime: number
   }>>(new Map())
 
-  // ✅ 新增：當前裝置 ID
-  const [myDeviceId, setMyDeviceId] = useState<string | null>(null)
+  // 🔥🔥🔥 修正 1：初始化當前裝置 ID (確保一開始就有值，避免 Race Condition)
+  const [myDeviceId, setMyDeviceId] = useState<string>(() => {
+    // 嘗試從 localStorage 讀取，沒有就隨機產生
+    const savedId = localStorage.getItem('simworld_device_id');
+    if (savedId) {
+        console.log("📱 [App] 從 localStorage 恢復 ID:", savedId);
+        return savedId;
+    }
+    const newId = `user-${Math.random().toString(36).substr(2, 9)}`;
+    console.log("📱 [App] 生成新 ID:", newId);
+    localStorage.setItem('simworld_device_id', newId);
+    return newId;
+  });
 
   // ✅ 新增：選擇的裝置 ID 狀態
   const [selectedDeviceId, setSelectedDeviceId] = useState<string | null>(null)
@@ -192,21 +204,25 @@ function App({ activeView }: AppProps) {
         const response = await fetch('https://backend.simworld.website/api/photo-history')
         const data = await response.json()
         if (data.success) {
-          setPhotos(data.photos)
+          // 這裡如果歷史資料沒有 ID，我們為了前端顯示，可以暫時補一個模擬 ID
+          // 但主要還是靠上面 myDeviceId 的修復來保證新照片有 ID
+          const photosWithId = data.photos.map((p: any) => ({
+            ...p,
+            deviceId: p.deviceId || `legacy-${Math.floor(Math.random() * 1000)}`
+          }))
+          setPhotos(photosWithId)
           console.log(`✅ 載入照片資料成功，共 ${data.count} 張`)
         }
       } catch (err) {
         console.error('❌ 載入照片資料失敗:', err)
       }
-    }
+    };
 
     fetchPhotos()
   }, [])
 
-  // 🔥🔥🔥 關鍵修正：這裡原本有一個 WebSocket，我們刪除了！
-  // 現在改用下面的 callback 來接收 UserLocation 傳來的照片事件
-
-  // ✅ 新增：處理從 UserLocation 傳來的照片事件 (接力成功！)
+  // 🔥🔥🔥 修正 2：處理從 UserLocation 傳來的照片事件
+  // 加入 myDeviceId 作為依賴，並在沒有 ID 時進行補救
   const handlePhotoReceivedFromUserLocation = useCallback((photoData: any) => {
     // 1. 處理刪除
     if (photoData.type === 'photo_deleted') {
@@ -216,13 +232,18 @@ function App({ activeView }: AppProps) {
     }
 
     // 2. 處理上傳
-    console.log('🔥 [App] 從 UserLocation 收到新照片:', photoData.url);
+    console.log('🔥 [App] 從 UserLocation 收到新照片，原始 ID:', photoData.deviceId);
+    
+    // 如果後端回傳有帶 ID 就用後端的，不然就用當下 App 的 ID 補救 (確保 MainScene 有顏色)
+    const finalDeviceId = photoData.deviceId || myDeviceId;
+
     const newPhoto = {
       url: photoData.url,
       timestamp: photoData.timestamp,
       latitude: photoData.latitude,
       longitude: photoData.longitude,
-      altitude: photoData.altitude
+      altitude: photoData.altitude,
+      deviceId: finalDeviceId // ✅ 確保這裡有值
     };
 
     setPhotos(prev => {
@@ -230,7 +251,7 @@ function App({ activeView }: AppProps) {
       if (prev.some(p => p.url === newPhoto.url)) return prev;
       return [newPhoto, ...prev];
     });
-  }, []);
+  }, [myDeviceId]); // ✅ 加入依賴
 
   // ✅ 載入 USRP 資料
   useEffect(() => {
@@ -570,9 +591,15 @@ function App({ activeView }: AppProps) {
 
   // ✅ 新增：接收當前裝置 ID
   const handleMyDeviceIdUpdate = useCallback((deviceId: string) => {
-    console.log("📱 App 接收到當前裝置 ID:", deviceId.substring(0, 8));
-    setMyDeviceId(deviceId);
-  }, []);
+    console.log("📱 UserLocation 回報 ID:", deviceId);
+    // UserLocation 產生的 ID 通常跟我們 localStorage 裡的一樣
+    // 如果不一樣，我們選擇信任 UserLocation 或者是維持現狀都可以
+    // 這裡我們做個同步，確保一致性
+    if (deviceId && deviceId !== myDeviceId) {
+        setMyDeviceId(deviceId);
+        localStorage.setItem('simworld_device_id', deviceId);
+    }
+  }, [myDeviceId]);
 
   // ✅ 新增：處理裝置斷線（從 UserLocation 接收）
   const handleDeviceDisconnected = useCallback((deviceId: string) => {
@@ -654,8 +681,6 @@ function App({ activeView }: AppProps) {
             usrpData={usrpData}
             allDevicePositions={allDevicePositions}
             myDeviceId={myDeviceId}
-            
-            // ✅ 4. 傳遞多軌跡資料與顏色設定給 SceneView
             devicePaths={devicePaths}
             deviceColors={DEVICE_COLORS}
           />
@@ -699,7 +724,6 @@ function App({ activeView }: AppProps) {
     <>
       {isSceneReady ? (
         <>
-          {/* ✅✅✅ 最關鍵的修改：這裡傳入了 onPhotoReceived */}
           <UserLocation
             origin={origin}
             scale={scale}
@@ -716,8 +740,11 @@ function App({ activeView }: AppProps) {
             onSelectedDeviceIdChange={handleDeviceSelect}
             onAllDevicesUpdate={handleAllDevicesUpdate}
             
-            // 🔥🔥 接上對講機：處理從 UserLocation 轉傳過來的照片
+            // 🔥🔥 接上對講機
             onPhotoReceived={handlePhotoReceivedFromUserLocation}
+
+            // ✅✅✅ 新增這一行：把照片清單傳進去！
+            photos={photos} 
           />
 
           <TxInterferenceLocation
@@ -766,9 +793,12 @@ function App({ activeView }: AppProps) {
       )}
 
       <UploadPhoto uploadUrl="https://your-backend-api/upload-image" />
+      
+      {/* 🔥🔥🔥 修正 3：這裡一定要傳入 deviceId */}
       <CameraUpload 
         onUploadSuccess={handleUploadSuccess}
         currentPosition={currentGPSPosition}
+        deviceId={myDeviceId} 
       />
 
       <ErrorBoundary>
@@ -777,8 +807,6 @@ function App({ activeView }: AppProps) {
             onMenuClick={handleMenuClick}
             activeComponent={activeComponent}
             currentScene={currentScene}
-            // 🔥 關鍵修正：這裡改用 gpsAllDevices (UI 穩定名單)
-            // 避免 allDevicePositions (3D 高頻更新) 造成的列表閃爍衝突
             allDevices={gpsAllDevices}
             myDeviceId={myDeviceId}
             selectedDeviceId={selectedDeviceId}

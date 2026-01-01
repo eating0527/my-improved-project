@@ -2,12 +2,15 @@ import React, { useRef, useState } from 'react';
 
 interface CameraUploadProps {
   onUploadSuccess?: (filename: string) => void;
-  currentPosition?: { lat: number; lon: number; altitude?: number | null } | null; // ✅ 新增
+  currentPosition?: { lat: number; lon: number; altitude?: number | null } | null;
+  // ✅ 新增：接收當前裝置 ID
+  deviceId?: string | null; 
 }
 
 const CameraUpload: React.FC<CameraUploadProps> = ({ 
   onUploadSuccess,
-  currentPosition // ✅ 新增
+  currentPosition,
+  deviceId // ✅ 解構出 deviceId
 }) => {
   const fileInputRef = useRef<HTMLInputElement>(null);
   const [uploading, setUploading] = useState(false);
@@ -37,6 +40,14 @@ const CameraUpload: React.FC<CameraUploadProps> = ({
       console.log('📍 上傳照片時的 GPS 座標:', currentPosition);
     } else {
       console.warn('⚠️ 無法取得 GPS 座標');
+    }
+
+    // ✅ 加入裝置 ID (如果有的話)
+    if (deviceId) {
+      formData.append('deviceId', deviceId);
+      console.log('📱 上傳照片時的 Device ID:', deviceId);
+    } else {
+      console.warn('⚠️ 無法取得 Device ID，照片將沒有歸屬');
     }
 
     try {
@@ -130,21 +141,42 @@ const CameraUpload: React.FC<CameraUploadProps> = ({
         {uploading ? '⏳' : '📸'}
       </button>
       
-      {/* ✅ 顯示當前 GPS 狀態 */}
-      {currentPosition && (
-        <div style={{
-          fontSize: '10px',
-          color: '#00ff00',
-          fontFamily: 'monospace',
-          textAlign: 'center',
-          maxWidth: '150px',
-          whiteSpace: 'nowrap',
-          overflow: 'hidden',
-          textOverflow: 'ellipsis'
-        }}>
-          📍 GPS: {currentPosition.lat.toFixed(4)}, {currentPosition.lon.toFixed(4)}
-        </div>
-      )}
+      {/* 顯示當前 GPS 與 ID 狀態 */}
+      <div style={{
+        display: 'flex',
+        flexDirection: 'column',
+        alignItems: 'center',
+        gap: '2px'
+      }}>
+        {currentPosition && (
+          <div style={{
+            fontSize: '10px',
+            color: '#00ff00',
+            fontFamily: 'monospace',
+            textAlign: 'center',
+            maxWidth: '150px',
+            whiteSpace: 'nowrap',
+            overflow: 'hidden',
+            textOverflow: 'ellipsis'
+          }}>
+            📍 GPS: {currentPosition.lat.toFixed(4)}, {currentPosition.lon.toFixed(4)}
+          </div>
+        )}
+        {deviceId && (
+          <div style={{
+            fontSize: '9px',
+            color: '#00BFFF',
+            fontFamily: 'monospace',
+            textAlign: 'center',
+            maxWidth: '150px',
+            whiteSpace: 'nowrap',
+            overflow: 'hidden',
+            textOverflow: 'ellipsis'
+          }}>
+            🆔 ID: {deviceId.substring(0, 8)}...
+          </div>
+        )}
+      </div>
       
       {message && (
         <div style={{

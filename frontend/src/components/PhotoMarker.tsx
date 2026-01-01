@@ -11,13 +11,21 @@ interface PhotoMarkerProps {
   totalPhotos?: number
   latitude?: number
   longitude?: number
+  color?: string
 }
 
+// ✅ 修改亮度計算：越新的照片 (Index 越大) 越亮，越舊的越暗
 function calculateRelativeFreshness(photoIndex: number, totalPhotos: number): number {
   if (totalPhotos <= 1) return 1
-  const minOpacity = 0.2
-  const maxOpacity = 1.0
-  const freshness = maxOpacity - (photoIndex / (totalPhotos - 1)) * (maxOpacity - minOpacity)
+  
+  const minOpacity = 0.3 // 最舊的照片最低亮度 (可以自己調，例如 0.2)
+  const maxOpacity = 1.0 // 最新的照片亮度
+  
+  // 公式：(當前排名 / (總數 - 1)) * 範圍 + 最低值
+  // Index 0 (最早) => 0 + 0.3 = 0.3
+  // Index Max (最新) => 0.7 + 0.3 = 1.0
+  const freshness = (photoIndex / (totalPhotos - 1)) * (maxOpacity - minOpacity) + minOpacity
+  
   return freshness
 }
 
@@ -30,6 +38,7 @@ const PhotoMarker: React.FC<PhotoMarkerProps> = ({
   totalPhotos = 1,
   latitude,
   longitude,
+  color = '#ffa500',
 }) => {
   const [hovered, setHovered] = useState(false)
   const [showPreview, setShowPreview] = useState(false)
@@ -62,7 +71,7 @@ const PhotoMarker: React.FC<PhotoMarkerProps> = ({
       <mesh
         ref={meshRef}
         onPointerOver={(e) => {
-          e.stopPropagation() // 防止事件穿透
+          e.stopPropagation()
           setHovered(true)
           setShowPreview(true)
         }}
@@ -74,15 +83,15 @@ const PhotoMarker: React.FC<PhotoMarkerProps> = ({
           e.stopPropagation()
           console.log('📸 點擊照片標記:', photoUrl)
           onClick?.()
-          // 手機版優化：點擊時也可以切換預覽顯示，方便觸控操作
           setShowPreview(prev => !prev) 
         }}
       >
         <sphereGeometry args={[5, 32, 32]} />
         <meshStandardMaterial
-          color={hovered ? '#ff69b4' : '#ffa500'}
-          emissive={hovered ? '#ff1493' : '#ff8c00'}
-          emissiveIntensity={hovered ? freshness * 2.0 : freshness * 1.5}
+          color={hovered ? '#ff69b4' : color}
+          emissive={hovered ? '#ff1493' : color}
+          // 滑鼠移上去時最亮，平常依照新舊程度顯示亮度
+          emissiveIntensity={hovered ? 2.0 : freshness * 1.5}
           opacity={freshness * 0.9}
           transparent
         />
@@ -92,7 +101,7 @@ const PhotoMarker: React.FC<PhotoMarkerProps> = ({
       <mesh rotation={[Math.PI / 2, 0, 0]}>
         <ringGeometry args={[6, 8, 32]} />
         <meshBasicMaterial
-          color="#ffa500"
+          color={color}
           opacity={freshness * 0.5}
           transparent
           side={THREE.DoubleSide}
@@ -104,11 +113,11 @@ const PhotoMarker: React.FC<PhotoMarkerProps> = ({
         position={[0, 15, 0]}
         center
         sprite
-        zIndexRange={[90, 0]} // ✅ 新增：確保標籤不會被建築物遮得很嚴重
+        zIndexRange={[90, 0]}
         style={{
           background: hovered
-            ? `rgba(255, 105, 180, ${freshness * 0.95})`
-            : `rgba(255, 165, 0, ${freshness * 0.9})`,
+            ? `rgba(255, 105, 180, 0.95)` // Hover 時不透明
+            : `rgba(40, 40, 40, ${freshness})`, // 平常跟著亮度淡出
           color: 'white',
           padding: '5px 10px',
           borderRadius: '5px',
@@ -117,14 +126,17 @@ const PhotoMarker: React.FC<PhotoMarkerProps> = ({
           whiteSpace: 'nowrap',
           pointerEvents: 'none',
           userSelect: 'none',
-          border: hovered ? '2px solid #ff69b4' : '2px solid #ffa500',
+          border: hovered ? '2px solid #ff69b4' : `2px solid ${color}`,
+          // 越舊的照片，標籤越透明，避免干擾視覺
+          opacity: hovered ? 1 : Math.max(0.5, freshness),
           boxShadow: hovered
-            ? `0 4px 16px rgba(255, 105, 180, ${freshness * 0.6})`
-            : `0 4px 12px rgba(255, 165, 0, ${freshness * 0.5})`,
+            ? `0 4px 16px rgba(255, 105, 180, 0.6)`
+            : `0 4px 12px ${color}66`,
           transition: 'all 0.3s ease',
         }}
       >
-        📷 照片 #{totalPhotos - photoIndex}
+        {/* ✅ 修改這裡：最早的是 #1，依序增加 */}
+        📷 照片 #{photoIndex + 1}
       </Html>
 
       {/* 懸浮預覽視窗 */}
@@ -132,11 +144,11 @@ const PhotoMarker: React.FC<PhotoMarkerProps> = ({
         <Html
           position={[0, 30, 0]}
           center
-          zIndexRange={[100, 0]} // ✅ 新增：讓預覽視窗永遠顯示在最上層
+          zIndexRange={[100, 0]}
           style={{
             pointerEvents: 'none',
             userSelect: 'none',
-            zIndex: 99999, // CSS 層級保險
+            zIndex: 99999,
           }}
         >
           <div
@@ -144,13 +156,13 @@ const PhotoMarker: React.FC<PhotoMarkerProps> = ({
               background: 'rgba(0, 0, 0, 0.9)',
               padding: '10px',
               borderRadius: '10px',
-              border: '2px solid #ffa500',
+              border: `2px solid ${color}`,
               boxShadow: '0 8px 24px rgba(0, 0, 0, 0.8)',
               display: 'flex',
               flexDirection: 'column',
               alignItems: 'center',
               gap: '8px',
-              minWidth: '220px', // 固定最小寬度，避免太窄
+              minWidth: '220px',
             }}
           >
             <img
@@ -161,9 +173,9 @@ const PhotoMarker: React.FC<PhotoMarkerProps> = ({
                 height: '200px',
                 objectFit: 'cover',
                 borderRadius: '8px',
-                border: '2px solid #ffa500',
+                border: `2px solid ${color}`,
                 opacity: 1.0,
-                backgroundColor: '#333' // 載入前顯示深色背景
+                backgroundColor: '#333'
               }}
               onError={(e) => {
                 console.error('❌ 照片載入失敗:', photoUrl)
@@ -173,7 +185,7 @@ const PhotoMarker: React.FC<PhotoMarkerProps> = ({
             
             <div
               style={{
-                color: '#ffa500',
+                color: color,
                 fontSize: '12px',
                 fontFamily: 'monospace',
                 textAlign: 'center',
@@ -182,8 +194,9 @@ const PhotoMarker: React.FC<PhotoMarkerProps> = ({
             >
               <div style={{ fontWeight: 'bold', marginBottom: '4px' }}>{formatTimestamp(timestamp)}</div>
               
-              <div style={{ fontSize: '10px', color: '#ffcc00' }}>
-                💡 亮度: {(freshness * 100).toFixed(0)}% ({photoIndex + 1}/{totalPhotos})
+              <div style={{ fontSize: '10px', color: '#ccc' }}>
+                {/* 顯示亮度資訊，方便除錯 */}
+                💡 亮度: {(freshness * 100).toFixed(0)}% (No.{photoIndex + 1})
               </div>
               
               <div style={{ marginTop: '4px', fontSize: '10px', color: '#66ff66' }}>
