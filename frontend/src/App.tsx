@@ -1,5 +1,3 @@
-console.log("🔥 App component render 了");
-
 import { useState, useCallback, useMemo, useEffect } from "react";
 import { useParams } from "react-router-dom";
 import SceneView from "./components/scenes/StereogramView";
@@ -23,7 +21,6 @@ import CameraUpload from "./components/CameraUpload";
 
 console.log("Origin LAT:", import.meta.env.VITE_ORIGIN_LAT);
 
-// ✅ 1. 定義顏色庫 (分配給不同裝置的軌跡)
 const DEVICE_COLORS = [
   '#ff0000', // 紅(預設)
   '#00ff00', // 綠
@@ -44,36 +41,25 @@ function App({ activeView }: AppProps) {
   const currentScene = scenes || "nycu";
   const initialComponent = activeView === "stereogram" ? "3DRT" : "2DRT";
 
-  // ✅ 場景準備狀態
   const [isSceneReady, setIsSceneReady] = useState(false);
-
-  // ✅ UAV 軌跡狀態（單機模式保留，多機模式用 devicePaths）
   const [uavPath, setUavPath] = useState<Array<{ x: number; y: number; z: number }>>([]);
-  
-  // ✅ 2. 新增：多裝置軌跡狀態 (Map<DeviceId, PathArray>)
   const [devicePaths, setDevicePaths] = useState<Map<string, Array<{ x: number; y: number; z: number }>>>(new Map());
-
-  // ✅ UAV 當前位置狀態
   const [uavPosition, setUavPosition] = useState<[number, number, number]>([0, 10, 0]);
-  
-  // ✅ GPS 位置狀態
   const [currentGPSPosition, setCurrentGPSPosition] = useState<{ 
     lat: number; 
     lon: number; 
     altitude?: number | null 
   } | null>(null)
 
-  // ✅ 照片列表狀態
   const [photos, setPhotos] = useState<Array<{
     url: string
     timestamp: string
     latitude?: number | null
     longitude?: number | null
     altitude?: number | null
-    deviceId?: string // ✅ 新增：用來存拍照者的 ID
+    deviceId?: string 
   }>>([])
 
-  // ✅ USRP 資料狀態
   const [usrpData, setUsrpData] = useState<Array<{
     id: number
     timestamp: string
@@ -87,11 +73,8 @@ function App({ activeView }: AppProps) {
     device_name: string
   }>>([])
   
-  // ✅ 移動距離狀態
   const [totalDistance, setTotalDistance] = useState<number>(0);
 
-  // ✅ 修改：多裝置 UAV 位置管理（加上 alt）
-  // 這是給 3D 場景用的高頻率更新資料
   const [allDevicePositions, setAllDevicePositions] = useState<Map<string, {
     position: [number, number, number]
     deviceId: string
@@ -102,8 +85,6 @@ function App({ activeView }: AppProps) {
     accuracy: number
   }>>(new Map())
 
-  // ✅ 新增：儲存來自 UserLocation 的 allDevices（完整 GPS 資料）
-  // 這是給 Navbar UI 用的穩定資料
   const [gpsAllDevices, setGpsAllDevices] = useState<Map<string, {
     lat: number
     lon: number
@@ -114,9 +95,7 @@ function App({ activeView }: AppProps) {
     lastUpdateTime: number
   }>>(new Map())
 
-  // 🔥🔥🔥 修正 1：初始化當前裝置 ID (確保一開始就有值，避免 Race Condition)
   const [myDeviceId, setMyDeviceId] = useState<string>(() => {
-    // 嘗試從 localStorage 讀取，沒有就隨機產生
     const savedId = localStorage.getItem('simworld_device_id');
     if (savedId) {
         console.log("📱 [App] 從 localStorage 恢復 ID:", savedId);
@@ -128,7 +107,6 @@ function App({ activeView }: AppProps) {
     return newId;
   });
 
-  // ✅ 新增：選擇的裝置 ID 狀態
   const [selectedDeviceId, setSelectedDeviceId] = useState<string | null>(null)
 
   const {
@@ -147,29 +125,16 @@ function App({ activeView }: AppProps) {
     updateDevicePositionFromUAV,
   } = useDevices();
 
-  const [skyfieldSatellites, setSkyfieldSatellites] =
-    useState<VisibleSatelliteInfo[]>([]);
-  const [satelliteDisplayCount, setSatelliteDisplayCount] =
-    useState<number>(10);
+  const [skyfieldSatellites, setSkyfieldSatellites] = useState<VisibleSatelliteInfo[]>([]);
+  const [satelliteDisplayCount, setSatelliteDisplayCount] = useState<number>(10);
   const [satelliteEnabled, setSatelliteEnabled] = useState<boolean>(false);
 
-  const [activeComponent, setActiveComponent] =
-    useState<string>(initialComponent);
+  const [activeComponent, setActiveComponent] = useState<string>(initialComponent);
   const [auto, setAuto] = useState(false);
   const [manualDirection, setManualDirection] = useState<
-    | "up"
-    | "down"
-    | "left"
-    | "right"
-    | "ascend"
-    | "descend"
-    | "left-up"
-    | "right-up"
-    | "left-down"
-    | "right-down"
-    | "rotate-left"
-    | "rotate-right"
-    | null
+    | "up" | "down" | "left" | "right" | "ascend" | "descend" 
+    | "left-up" | "right-up" | "left-down" | "right-down" 
+    | "rotate-left" | "rotate-right" | null
   >(null);
   const [uavAnimation, setUavAnimation] = useState(false);
   const [selectedReceiverIds, setSelectedReceiverIds] = useState<number[]>([]);
@@ -182,30 +147,25 @@ function App({ activeView }: AppProps) {
     }),
     []
   );
-  console.log("App origin:", origin);
+  
   const scale = Number(import.meta.env.VITE_SCENE_SCALE ?? 1);
 
-  // ✅ 等待場景準備好
   useEffect(() => {
     console.log("⏳ 開始載入場景，等待 3 秒...")
-    
     const timer = setTimeout(() => {
       console.log("✅ 場景已準備好，開始渲染基準點")
       setIsSceneReady(true)
     }, 3000)
-
     return () => clearTimeout(timer)
   }, [])
 
-  // ✅ 載入照片資料 (初始載入)
+  // 載入照片資料
   useEffect(() => {
     const fetchPhotos = async () => {
       try {
         const response = await fetch('https://backend.simworld.website/api/photo-history')
         const data = await response.json()
         if (data.success) {
-          // 這裡如果歷史資料沒有 ID，我們為了前端顯示，可以暫時補一個模擬 ID
-          // 但主要還是靠上面 myDeviceId 的修復來保證新照片有 ID
           const photosWithId = data.photos.map((p: any) => ({
             ...p,
             deviceId: p.deviceId || `legacy-${Math.floor(Math.random() * 1000)}`
@@ -217,24 +177,18 @@ function App({ activeView }: AppProps) {
         console.error('❌ 載入照片資料失敗:', err)
       }
     };
-
     fetchPhotos()
   }, [])
 
-  // 🔥🔥🔥 修正 2：處理從 UserLocation 傳來的照片事件
-  // 加入 myDeviceId 作為依賴，並在沒有 ID 時進行補救
+  // 處理 WebSocket 照片
   const handlePhotoReceivedFromUserLocation = useCallback((photoData: any) => {
-    // 1. 處理刪除
     if (photoData.type === 'photo_deleted') {
        console.log('🗑️ [App] 從 UserLocation 收到刪除通知:', photoData.filename);
        setPhotos(prev => prev.filter(p => !p.url.includes(photoData.filename)));
        return;
     }
 
-    // 2. 處理上傳
     console.log('🔥 [App] 從 UserLocation 收到新照片，原始 ID:', photoData.deviceId);
-    
-    // 如果後端回傳有帶 ID 就用後端的，不然就用當下 App 的 ID 補救 (確保 MainScene 有顏色)
     const finalDeviceId = photoData.deviceId || myDeviceId;
 
     const newPhoto = {
@@ -243,45 +197,37 @@ function App({ activeView }: AppProps) {
       latitude: photoData.latitude,
       longitude: photoData.longitude,
       altitude: photoData.altitude,
-      deviceId: finalDeviceId // ✅ 確保這裡有值
+      deviceId: finalDeviceId
     };
 
     setPhotos(prev => {
-      // 避免重複添加
       if (prev.some(p => p.url === newPhoto.url)) return prev;
       return [newPhoto, ...prev];
     });
-  }, [myDeviceId]); // ✅ 加入依賴
+  }, [myDeviceId]);
 
-  // ✅ 載入 USRP 資料
+  // 載入 USRP
   useEffect(() => {
     const fetchUSRPData = async () => {
       try {
         const response = await fetch('https://backend.simworld.website/api/usrp-data')
         const data = await response.json()
         setUsrpData(data)
-        console.log(`📡 載入 USRP 資料成功，共 ${data.length} 筆`)
       } catch (err) {
         console.error('❌ 載入 USRP 資料失敗:', err)
       }
     }
-
-    // 初次載入
     fetchUSRPData()
-    
-    // ✅ 每 5 秒更新一次 USRP 資料（即時更新）
     const interval = setInterval(fetchUSRPData, 5000)
-    
     return () => clearInterval(interval)
   }, [])
 
-  // ✅ 計算移動距離
+  // 計算距離
   useEffect(() => {
     if (uavPath.length < 2) {
       setTotalDistance(0)
       return
     }
-
     const calculateDistance = (path: Array<{ x: number; y: number; z: number }>) => {
       let distance = 0
       for (let i = 1; i < path.length; i++) {
@@ -295,52 +241,155 @@ function App({ activeView }: AppProps) {
       }
       return distance
     }
-
     const newDistance = calculateDistance(uavPath)
     setTotalDistance(newDistance)
-    console.log(`📏 更新移動距離: ${newDistance.toFixed(2)}m`)
   }, [uavPath])
 
-  // ✅ 監聽軌跡變化
-  useEffect(() => {
-    if (uavPath.length > 0) {
-      console.log("📍 App 收到軌跡更新，點數:", uavPath.length);
+  const handlePathUpdate = useCallback((newPoint: { x: number; y: number; z: number }) => {
+    setUavPath((prevPath) => {
+      const newPath = [...prevPath, newPoint]
+      const finalPath = newPath.length > 2000 ? newPath.slice(-2000) : newPath
+      return finalPath
+    })
+  }, [])
+
+  const handleClearPath = useCallback(() => {
+    console.log("🗑️ 清除所有軌跡");
+    setDevicePaths(new Map()); 
+    setUavPath([]);            
+    setTotalDistance(0);       
+  }, []);
+
+  const handleUAVCurrentPositionUpdate = useCallback((
+    position: [number, number, number],
+    gpsPosition?: { lat: number; lon: number; altitude?: number | null }
+  ) => {
+    setUavPosition(position)
+    if (gpsPosition) {
+      setCurrentGPSPosition(gpsPosition)
     }
-  }, [uavPath]);
+  }, [])
 
-  // ✅ 監聽 UAV 位置變化
-  useEffect(() => {
-    console.log("🚁 App 收到 UAV 位置更新:", uavPosition);
-  }, [uavPosition]);
+  // ✅ 補回：處理設備新增/更新 (UserLocation 需要)
+  const handleUpsertDevice = useCallback((d: any) => {
+    setTempDevices((prev) => {
+      const i = prev.findIndex((x) => x.id === d.id);
+      if (i !== -1) {
+        const existing = prev[i];
+        if (
+          existing.position_x === d.position_x &&
+          existing.position_y === d.position_y &&
+          existing.position_z === d.position_z
+        ) {
+          return prev;
+        }
+        const next = prev.slice();
+        next[i] = { ...existing, ...d };
+        return next;
+      }
+      return [...prev, d];
+    });
+    setHasTempDevices(true);
+  }, [setTempDevices, setHasTempDevices]);
 
-  // ✅ 修改：監聽多裝置位置變化（顯示 deviceName 和 alt）
-  useEffect(() => {
-    if (allDevicePositions.size > 0) {
-      console.log("📱 App 收到多裝置位置更新，裝置數:", allDevicePositions.size);
-      allDevicePositions.forEach((device, deviceId) => {
-        console.log(`📱 裝置 ${deviceId.substring(0, 8)} (${device.deviceName || 'N/A'}):`, {
-          ...device,
-          alt: device.alt
-        });
+  // ✅ 處理多裝置位置更新 (移除 Log，優化效能)
+  const handleMultiDevicePositionUpdate = useCallback((
+    deviceId: string,
+    position: [number, number, number],
+    lat: number,
+    lon: number,
+    accuracy: number,
+    deviceName?: string,
+    alt?: number
+  ) => {
+    // 1. 更新位置
+    setAllDevicePositions(prev => {
+      const existing = prev.get(deviceId);
+      if (existing && existing.position[0] === position[0] && existing.position[2] === position[2]) {
+          return prev;
+      }
+      const newMap = new Map(prev);
+      newMap.set(deviceId, {
+        position,
+        deviceId,
+        deviceName: deviceName || 'Unknown',
+        lat,
+        lon,
+        alt: alt || 0,
+        accuracy
+      });
+      return newMap;
+    });
+
+    // 2. 記錄軌跡 (零門檻)
+    setDevicePaths(prev => {
+      const newMap = new Map(prev);
+      const currentPath = newMap.get(deviceId) || [];
+      
+      const safeHeight = Math.max(position[1], 20);
+      const newPoint = { x: position[0], y: safeHeight, z: position[2] };
+      
+      const lastPoint = currentPath[currentPath.length - 1];
+
+      let isDuplicate = false;
+      if (lastPoint) {
+        if (lastPoint.x === newPoint.x && lastPoint.z === newPoint.z) {
+            isDuplicate = true;
+        }
+      }
+
+      if (!lastPoint || !isDuplicate) {
+          const updatedPath = [...currentPath, newPoint];
+          if (updatedPath.length > 5000) updatedPath.shift();
+          
+          newMap.set(deviceId, updatedPath);
+          return newMap;
+      }
+      return prev; 
+    });
+  }, []);
+
+  const handleAllDevicesUpdate = useCallback((devices: Map<string, any>) => {
+    setGpsAllDevices(new Map(devices))
+  }, [])
+
+  const handleUploadSuccess = (filename: string) => {
+    console.log("✅ 照片上傳成功:", filename);
+  };
+
+  const handleMyDeviceIdUpdate = useCallback((deviceId: string) => {
+    if (deviceId && deviceId !== myDeviceId) {
+        setMyDeviceId(deviceId);
+        localStorage.setItem('simworld_device_id', deviceId);
+    }
+  }, [myDeviceId]);
+
+  const handleDeviceDisconnected = useCallback((deviceId: string) => {
+    console.log("🗑️ App 接收到裝置斷線通知:", deviceId.substring(0, 8));
+    setAllDevicePositions(prev => {
+      const newMap = new Map(prev);
+      newMap.delete(deviceId);
+      return newMap;
+    });
+    setGpsAllDevices(prev => {
+      const newMap = new Map(prev);
+      newMap.delete(deviceId);
+      return newMap;
+    });
+    if (deviceId === selectedDeviceId) {
+      setSelectedDeviceId(prev => {
+        const remainingDevices = Array.from(gpsAllDevices.keys()).filter(id => id !== deviceId);
+        return remainingDevices.length > 0 ? remainingDevices[0] : null;
       });
     }
-  }, [allDevicePositions]);
+  }, [selectedDeviceId, gpsAllDevices]);
 
-  // ✅ 新增：監聽 gpsAllDevices 變化
-  useEffect(() => {
-    if (gpsAllDevices.size > 0) {
-      console.log("📡 App 收到 GPS 裝置列表更新，裝置數:", gpsAllDevices.size);
-      gpsAllDevices.forEach((device, deviceId) => {
-        console.log(`📡 GPS 裝置 ${deviceId.substring(0, 8)}:`, {
-          deviceName: device.deviceName,
-          lat: device.lat.toFixed(6),
-          lon: device.lon.toFixed(6),
-          accuracy: device.accuracy.toFixed(2)
-        });
-      });
-    }
-  }, [gpsAllDevices]);
+  const handleDeviceSelect = useCallback((deviceId: string) => {
+    console.log('📱 App 切換裝置:', deviceId.substring(0, 8));
+    setSelectedDeviceId(deviceId);
+  }, []);
 
+  // 側邊欄設備排序
   const sortedDevicesForSidebar = useMemo(() => {
     return [...tempDevices].sort((a, b) => {
       const roleOrder: { [key: string]: number } = {
@@ -439,19 +488,9 @@ function App({ activeView }: AppProps) {
   const handleManualControl = useCallback(
     (
       direction:
-        | "up"
-        | "down"
-        | "left"
-        | "right"
-        | "ascend"
-        | "descend"
-        | "left-up"
-        | "right-up"
-        | "left-down"
-        | "right-down"
-        | "rotate-left"
-        | "rotate-right"
-        | null
+        | "up" | "down" | "left" | "right" | "ascend" | "descend"
+        | "left-up" | "right-up" | "left-down" | "right-down"
+        | "rotate-left" | "rotate-right" | null
     ) => {
       if (selectedReceiverIds.length === 0) {
         console.log("沒有選中的 receiver，無法控制 UAV");
@@ -470,186 +509,6 @@ function App({ activeView }: AppProps) {
     },
     [selectedReceiverIds, updateDevicePositionFromUAV]
   );
-
-  const handleUploadSuccess = (filename: string) => {
-    console.log("✅ 照片上傳成功:", filename);
-  };
-
-  const handleUpsertDevice = useCallback((d: any) => {
-    console.log("📡 更新設備:", d);
-    setTempDevices((prev) => {
-      const i = prev.findIndex((x) => x.id === d.id);
-      if (i !== -1) {
-        const existing = prev[i];
-        if (
-          existing.position_x === d.position_x &&
-          existing.position_y === d.position_y &&
-          existing.position_z === d.position_z
-        ) {
-          return prev;
-        }
-      }
-      if (i === -1) return [...prev, d];
-      const next = prev.slice();
-      next[i] = { ...prev[i], ...d };
-      return next;
-    });
-    setHasTempDevices(true);
-  }, [setTempDevices, setHasTempDevices]);
-
-  // ✅ 軌跡更新回調函數（接收單個點）
-  const handlePathUpdate = useCallback((newPoint: { x: number; y: number; z: number }) => {
-    console.log("📍 App 接收到新軌跡點:", newPoint);
-    setUavPath((prevPath) => {
-      const newPath = [...prevPath, newPoint]
-      const finalPath = newPath.length > 2000 ? newPath.slice(-2000) : newPath
-      console.log(`📍 軌跡點數: ${finalPath.length}`)
-      return finalPath
-    })
-  }, [])
-
-  // ✅ 清除軌跡回調函數
-  const handleClearPath = useCallback(() => {
-    setUavPath([])
-    setDevicePaths(new Map()) // ✅ 3. 清除所有裝置軌跡
-    setTotalDistance(0)
-    console.log("🗑️ 已清除所有軌跡")
-  }, [])
-
-  // ✅ UAV 位置更新回調函數（接收位置和 GPS 座標）
-  const handleUAVCurrentPositionUpdate = useCallback((
-    position: [number, number, number],
-    gpsPosition?: { lat: number; lon: number; altitude?: number | null }
-  ) => {
-    setUavPosition(position)
-    if (gpsPosition) {
-      setCurrentGPSPosition(gpsPosition)
-      console.log("📍 GPS 位置更新:", gpsPosition)
-    }
-    console.log("🚁 App 接收到 UAV 位置更新:", position)
-  }, [])
-
-  // ✅ 修改：多裝置位置更新回調（同時更新位置 + 軌跡）
-  const handleMultiDevicePositionUpdate = useCallback((
-    deviceId: string,
-    position: [number, number, number],
-    lat: number,
-    lon: number,
-    accuracy: number,
-    deviceName?: string,
-    alt?: number
-  ) => {
-    console.log(`📱 App 接收到裝置 ${deviceId.substring(0, 8)} 位置更新`);
-
-    // 1. 更新當前位置 (保持原本邏輯)
-    setAllDevicePositions(prev => {
-      const newMap = new Map(prev);
-      newMap.set(deviceId, {
-        position,
-        deviceId,
-        deviceName: deviceName || 'Unknown',
-        lat,
-        lon,
-        alt: alt || 0,
-        accuracy
-      });
-      return newMap;
-    });
-
-    // 2. 🔥 新增：同時更新該裝置的軌跡
-    setDevicePaths(prev => {
-      const newMap = new Map(prev);
-      const currentPath = newMap.get(deviceId) || [];
-      const newPoint = { x: position[0], y: position[1], z: position[2] };
-      
-      // 簡單優化：只有位置移動超過 0.1 單位才記錄，避免原地累積太多點
-      const lastPoint = currentPath[currentPath.length - 1];
-      const hasMoved = !lastPoint || 
-          Math.abs(lastPoint.x - newPoint.x) > 0.1 || 
-          Math.abs(lastPoint.y - newPoint.y) > 0.1 || 
-          Math.abs(lastPoint.z - newPoint.z) > 0.1;
-
-      if (hasMoved) {
-          const updatedPath = [...currentPath, newPoint];
-          // 限制軌跡長度，只保留最近 1000 點
-          if (updatedPath.length > 1000) updatedPath.shift();
-          newMap.set(deviceId, updatedPath);
-          return newMap;
-      }
-      return prev; // 沒變動就不更新 state，節省效能
-    });
-  }, []);
-
-  // --- 💡 關鍵修正：接收 UserLocation 的 allDevices (移除 0,0 過濾) ---
-  const handleAllDevicesUpdate = useCallback((devices: Map<string, any>) => {
-    console.log('📱 App 接收到 allDevices 更新，原始裝置數:', devices.size)
-    
-    // ✅ 改為：直接接收所有裝置，不做過濾
-    setGpsAllDevices(new Map(devices))
-    
-  }, [])
-
-  // ✅ 新增：接收當前裝置 ID
-  const handleMyDeviceIdUpdate = useCallback((deviceId: string) => {
-    console.log("📱 UserLocation 回報 ID:", deviceId);
-    // UserLocation 產生的 ID 通常跟我們 localStorage 裡的一樣
-    // 如果不一樣，我們選擇信任 UserLocation 或者是維持現狀都可以
-    // 這裡我們做個同步，確保一致性
-    if (deviceId && deviceId !== myDeviceId) {
-        setMyDeviceId(deviceId);
-        localStorage.setItem('simworld_device_id', deviceId);
-    }
-  }, [myDeviceId]);
-
-  // ✅ 新增：處理裝置斷線（從 UserLocation 接收）
-  const handleDeviceDisconnected = useCallback((deviceId: string) => {
-    console.log("🗑️ App 接收到裝置斷線通知:", deviceId.substring(0, 8));
-    
-    setAllDevicePositions(prev => {
-      const newMap = new Map(prev);
-      const deleted = newMap.delete(deviceId);
-      
-      if (deleted) {
-        console.log(`✅ 已從 allDevicePositions 移除裝置 ${deviceId.substring(0, 8)}，剩餘: ${newMap.size}`);
-      } else {
-        console.log(`⚠️ 裝置 ${deviceId.substring(0, 8)} 不在 allDevicePositions 中`);
-      }
-      
-      return newMap;
-    });
-
-    // ✅ 同時從 gpsAllDevices 移除
-    setGpsAllDevices(prev => {
-      const newMap = new Map(prev);
-      const deleted = newMap.delete(deviceId);
-      
-      if (deleted) {
-        console.log(`✅ 已從 gpsAllDevices 移除裝置 ${deviceId.substring(0, 8)}，剩餘: ${newMap.size}`);
-      }
-      
-      return newMap;
-    });
-
-    // ✅ 如果刪除的是當前選擇的裝置，自動切換到第一個可用裝置
-    if (deviceId === selectedDeviceId) {
-      setSelectedDeviceId(prev => {
-        const remainingDevices = Array.from(gpsAllDevices.keys()).filter(id => id !== deviceId);
-        const newSelectedId = remainingDevices.length > 0 ? remainingDevices[0] : null;
-        if (newSelectedId) {
-          console.log(`🔄 當前選擇的裝置已斷線，自動切換到: ${newSelectedId.substring(0, 8)}`);
-        } else {
-          console.log(`⚠️ 沒有其他裝置可切換`);
-        }
-        return newSelectedId;
-      });
-    }
-  }, [selectedDeviceId, gpsAllDevices]);
-
-  // ✅ 新增：處理裝置選擇
-  const handleDeviceSelect = useCallback((deviceId: string) => {
-    console.log('📱 App 切換裝置:', deviceId.substring(0, 8));
-    setSelectedDeviceId(deviceId);
-  }, []);
 
   const renderActiveComponent = useCallback(() => {
     switch (activeComponent) {
@@ -715,7 +574,7 @@ function App({ activeView }: AppProps) {
     usrpData,
     allDevicePositions,
     myDeviceId,
-    devicePaths, // 加入依賴
+    devicePaths, 
   ]);
 
   if (loading) return <div className="loading">載入中...</div>;
@@ -729,7 +588,14 @@ function App({ activeView }: AppProps) {
             scale={scale}
             upsertDevice={handleUpsertDevice}
             onPathUpdate={handlePathUpdate}
-            pathLength={uavPath.length}
+            
+            pathLength={
+                (selectedDeviceId 
+                    ? devicePaths.get(selectedDeviceId)?.length 
+                    : (devicePaths.get(myDeviceId)?.length || uavPath.length)
+                ) || 0
+            }
+
             totalDistance={totalDistance}
             onClearPath={handleClearPath}
             onUAVPositionUpdate={handleUAVCurrentPositionUpdate}
@@ -739,67 +605,30 @@ function App({ activeView }: AppProps) {
             selectedDeviceId={selectedDeviceId}
             onSelectedDeviceIdChange={handleDeviceSelect}
             onAllDevicesUpdate={handleAllDevicesUpdate}
-            
-            // 🔥🔥 接上對講機
             onPhotoReceived={handlePhotoReceivedFromUserLocation}
-
-            // ✅✅✅ 新增這一行：把照片清單傳進去！
             photos={photos} 
           />
 
-          <TxInterferenceLocation
-            origin={origin}
-            scale={scale}
-            upsertDevice={handleUpsertDevice}
-          />
-
-          <RxInterferenceLocation
-            origin={origin}
-            scale={scale}
-            upsertDevice={handleUpsertDevice}
-          />
-
-          <BaselinePoint3Location
-            origin={origin}
-            scale={scale}
-            upsertDevice={handleUpsertDevice}
-          />
+          <TxInterferenceLocation origin={origin} scale={scale} upsertDevice={handleUpsertDevice} />
+          <RxInterferenceLocation origin={origin} scale={scale} upsertDevice={handleUpsertDevice} />
+          <BaselinePoint3Location origin={origin} scale={scale} upsertDevice={handleUpsertDevice} />
         </>
       ) : (
         <div style={{
-          position: 'fixed',
-          top: '50%',
-          left: '50%',
-          transform: 'translate(-50%, -50%)',
-          background: 'rgba(0, 0, 0, 0.9)',
-          color: 'white',
-          padding: '30px 40px',
-          borderRadius: '15px',
-          fontSize: '18px',
-          textAlign: 'center',
-          zIndex: 9999,
-          boxShadow: '0 4px 20px rgba(0,0,0,0.5)',
-          border: '2px solid #00ff00',
+          position: 'fixed', top: '50%', left: '50%', transform: 'translate(-50%, -50%)',
+          background: 'rgba(0, 0, 0, 0.9)', color: 'white', padding: '30px 40px',
+          borderRadius: '15px', fontSize: '18px', textAlign: 'center', zIndex: 9999,
+          boxShadow: '0 4px 20px rgba(0,0,0,0.5)', border: '2px solid #00ff00',
         }}>
           <div style={{ marginBottom: '15px', fontSize: '24px' }}>⏳</div>
           <div style={{ fontWeight: 'bold' }}>正在載入 3D 場景...</div>
-          <div style={{ fontSize: '14px', marginTop: '10px', color: '#aaa' }}>
-            行動網路可能需要較長時間
-          </div>
-          <div style={{ fontSize: '12px', marginTop: '5px', color: '#666' }}>
-            請稍候 3 秒
-          </div>
+          <div style={{ fontSize: '14px', marginTop: '10px', color: '#aaa' }}>行動網路可能需要較長時間</div>
+          <div style={{ fontSize: '12px', marginTop: '5px', color: '#666' }}>請稍候 3 秒</div>
         </div>
       )}
 
       <UploadPhoto uploadUrl="https://your-backend-api/upload-image" />
-      
-      {/* 🔥🔥🔥 修正 3：這裡一定要傳入 deviceId */}
-      <CameraUpload 
-        onUploadSuccess={handleUploadSuccess}
-        currentPosition={currentGPSPosition}
-        deviceId={myDeviceId} 
-      />
+      <CameraUpload onUploadSuccess={handleUploadSuccess} currentPosition={currentGPSPosition} deviceId={myDeviceId} />
 
       <ErrorBoundary>
         <div className="app-container">

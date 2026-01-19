@@ -18,7 +18,7 @@ import PhotoMarker from '../PhotoMarker'
 import USRPMarker from '../USRPMarker'
 import { latLonToENU } from '../../utils/geo'
 
-// ✅ 1. 簡易 Hash 函式：根據字串產生固定的顏色索引
+// 1. 簡易 Hash 函式：根據字串產生固定的顏色索引
 const getHashColor = (str: string, colors: string[]) => {
   if (!str) return '#ffa500' // 如果沒有 ID，預設橘色
   
@@ -405,7 +405,7 @@ const MainScene: React.FC<MainSceneProps> = ({
       devicesToRender = [{
         id: myDeviceId || 'self',
         position: uavPosition,
-        deviceName: '我的裝置', 
+        deviceName: '', 
         lat: 0,
         lon: 0,
         accuracy: 0,
@@ -454,7 +454,7 @@ const MainScene: React.FC<MainSceneProps> = ({
                 }}
               >
                 <div style={{ marginBottom: '3px' }}>
-                  {device.isMe ? '🟤 我的裝置: ' : '⚪ '}{displayName}
+                  {device.isMe ? 'UAV' : '⚪ '}{displayName}
                 </div>
                 {device.lat !== 0 && (
                   <>
@@ -531,11 +531,18 @@ const MainScene: React.FC<MainSceneProps> = ({
 
       {/* 2. ✅ 多機模式的彩色軌跡 (devicePaths) */}
       {devicePaths && Array.from(devicePaths.entries()).map(([deviceId, path]) => {
+        // 如果點太少不畫
         if (path.length < 2) return null
+        
+        // 恢復原本的顏色邏輯 (隨機/Hash 分配)
         const pathColor = getHashColor(deviceId, deviceColors)
+
         return (
           <UAVPath 
+            // 🔥🔥🔥 關鍵修正：移除 path.length，解決閃爍問題
+            // 只用 deviceId 作為 key，讓 React 知道這還是同一條線，只是屬性更新了
             key={`path-${deviceId}`} 
+            
             path={path} 
             color={pathColor} 
             lineWidth={3} 
