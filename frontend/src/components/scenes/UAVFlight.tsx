@@ -9,7 +9,7 @@ import { ApiRoutes } from '../../config/apiRoutes'
 const UAV_MODEL_URL = ApiRoutes.simulations.getModel('uav')
 
 // 請調整此值以補償懸停動畫的 Y 軸位移
-const HOVER_ANIMATION_Y_OFFSET = -1.28 // 範例值，如果向上跳了 5 個單位，則設為 -5
+const HOVER_ANIMATION_Y_OFFSET = -1.28 
 
 export type UAVManualDirection =
     | 'up'
@@ -46,7 +46,6 @@ export default function UAVFlight({
     uavAnimation,
 }: UAVFlightProps) {
     const group = useRef<THREE.Group>(null)
-    const cloneRef = useRef<THREE.Object3D>(null)
     const lightRef = useRef<THREE.PointLight>(null)
 
     // 使用標準加載方式
@@ -76,7 +75,6 @@ export default function UAVFlight({
     const [targetPosition, setTargetPosition] = useState<THREE.Vector3>(
         new THREE.Vector3(...position)
     )
-    const moveSpeed = useRef(0.5)
     const lastDirection = useRef(new THREE.Vector3(0, 0, 0))
     const turbulence = useRef({ x: 0, y: 0, z: 0 })
     const velocity = useRef(new THREE.Vector3(0, 0, 0))
@@ -267,77 +265,6 @@ export default function UAVFlight({
         setTargetPosition(end)
         return newWaypoints
     }
-    useEffect(() => {
-        // 設置警告攔截器以忽略動畫綁定錯誤
-        const originalWarning = console.warn
-        console.warn = function (...args: any[]) {
-            const message = args[0]
-            if (
-                message &&
-                typeof message === 'string' &&
-                message.includes(
-                    'THREE.PropertyBinding: No target node found for track:'
-                )
-            ) {
-                // 忽略找不到節點的警告
-                return
-            }
-            if (
-                message &&
-                typeof message === 'string' &&
-                message.includes(
-                    'Unknown extension "KHR_materials_pbrSpecularGlossiness"'
-                )
-            ) {
-                // 忽略未知擴展警告
-                return
-            }
-            originalWarning.apply(console, args)
-        }
-
-        // 安全地播放動畫，忽略錯誤
-        // try {
-        //     // 檢查是否有可用的動畫
-        //     if (actions && Object.keys(actions).length > 0) {
-        //         const action = actions[Object.keys(actions)[0]]
-        //         if (action) {
-        //             action.setLoop(THREE.LoopRepeat, Infinity)
-        //             action.play()
-        //             action.paused = !uavAnimation
-        //         }
-        //     } else {
-        //         console.log('沒有可用的動畫')
-        //     }
-        // } catch (error) {
-        //     console.error('動畫播放錯誤:', error)
-        // }
-
-        generatePath()
-
-        if (clonedScene) {
-            clonedScene.traverse((child: THREE.Object3D) => {
-                if ((child as THREE.Mesh).isMesh) {
-                    child.castShadow = true
-                    child.receiveShadow = true
-
-                    // 檢查材質，如果必要，替換為標準材質
-                    const mesh = child as THREE.Mesh
-                    if (Array.isArray(mesh.material)) {
-                        mesh.material = mesh.material.map((mat) =>
-                            ensureStandardMaterial(mat)
-                        )
-                    } else {
-                        mesh.material = ensureStandardMaterial(mesh.material)
-                    }
-                }
-            })
-        }
-
-        // 清理函數：恢復原始警告功能
-        return () => {
-            console.warn = originalWarning
-        }
-    }, [actions, clonedScene, uavAnimation])
 
     // 確保使用標準材質
     const ensureStandardMaterial = (material: THREE.Material) => {
@@ -363,6 +290,75 @@ export default function UAVFlight({
         return material
     }
 
+    useEffect(() => {
+        // 設置警告攔截器以忽略動畫綁定錯誤
+        const originalWarning = console.warn
+        console.warn = function (...args: any[]) {
+            const message = args[0]
+            if (
+                message &&
+                typeof message === 'string' &&
+                message.includes(
+                    'THREE.PropertyBinding: No target node found for track:'
+                )
+            ) {
+                return
+            }
+            if (
+                message &&
+                typeof message === 'string' &&
+                message.includes(
+                    'Unknown extension "KHR_materials_pbrSpecularGlossiness"'
+                )
+            ) {
+                return
+            }
+            originalWarning.apply(console, args)
+        }
+
+        generatePath()
+
+        // 🔥🔥🔥 X 光透視核心邏輯 🔥🔥🔥
+        const applyXRayEffect = (material: THREE.Material) => {
+            material.depthTest = false   // 關閉深度測試 (無視遮擋)
+            material.depthWrite = false  // 關閉深度寫入 (避免破圖)
+            material.transparent = true  // 開啟透明
+            material.opacity = 0.8       // (選填) 設定半透明
+        }
+
+        if (clonedScene) {
+            clonedScene.traverse((child: THREE.Object3D) => {
+                if ((child as THREE.Mesh).isMesh) {
+                    const mesh = child as THREE.Mesh
+                    
+                    // 🔥 1. 設定渲染順序為最高
+                    mesh.renderOrder = 999 
+                    
+                    mesh.castShadow = true
+                    mesh.receiveShadow = true
+
+                    // 🔥 2. 替換材質並套用 X 光效果
+                    if (Array.isArray(mesh.material)) {
+                        mesh.material = mesh.material.map((mat) => {
+                            const newMat = ensureStandardMaterial(mat)
+                            applyXRayEffect(newMat)
+                            return newMat
+                        })
+                    } else {
+                        const newMat = ensureStandardMaterial(mesh.material)
+                        applyXRayEffect(newMat)
+                        mesh.material = newMat
+                    }
+                }
+            })
+        }
+
+        // 清理函數：恢復原始警告功能
+        return () => {
+            console.warn = originalWarning
+        }
+    }, [actions, clonedScene, uavAnimation])
+
     // 尋找動畫 root（骨架/SkinnedMesh/Armature）
     function findAnimationRoot(obj: THREE.Object3D): THREE.Object3D {
         let found: THREE.Object3D | null = null
@@ -380,27 +376,7 @@ export default function UAVFlight({
 
     useEffect(() => {
         if (clonedScene && animations && animations.length > 0) {
-            // // 診斷 log (暫時註解掉以減少控制台輸出)
-            // console.log('=== AnimationClip tracks ===')
-            // animations.forEach((clip: THREE.AnimationClip) => {
-            //     console.log(
-            //         'clip:',
-            //         clip.name,
-            //         clip.tracks.map((t) => t.name)
-            //     )
-            // })
-            // console.log('=== clonedScene children ===')
-            // clonedScene.traverse((obj: THREE.Object3D) => {
-            //     console.log('obj:', obj.name, obj.type)
-            // })
-
-            // 自動尋找動畫 root
             const animationRoot = findAnimationRoot(clonedScene)
-            // console.log(
-            //     'AnimationMixer root:',
-            //     animationRoot.name,
-            //     animationRoot.type
-            // )
             const newMixer = new THREE.AnimationMixer(animationRoot)
             const newActions: { [key: string]: THREE.AnimationAction } = {}
             animations.forEach((clip: THREE.AnimationClip) => {
@@ -414,7 +390,6 @@ export default function UAVFlight({
     // 控制動畫播放/暫停
     useEffect(() => {
         if (mixer && animations && animations.length > 0 && clonedScene) {
-            // 只建立 hover 動畫
             const hoverClip = animations.find(
                 (clip: THREE.AnimationClip) => clip.name === 'hover'
             )
@@ -435,10 +410,9 @@ export default function UAVFlight({
                     hoverAction.paused = true
                     hoverAction.enabled = false
                     hoverAction.reset()
-                    clonedScene.position.y = 0 // 恢復原始相對 Y 位置
+                    clonedScene.position.y = 0 
                 }
             }
-            // 停用所有非 hover 動畫
             animations.forEach((clip: THREE.AnimationClip) => {
                 if (clip.name !== 'hover') {
                     const action = mixer.existingAction(clip)
@@ -457,10 +431,6 @@ export default function UAVFlight({
     useFrame((state, delta) => {
         if (mixer) mixer.update(delta)
         if (group.current) {
-            // 不要在這裡直接修改 group.current.position，currentPosition 已經包含了Z軸位移
-            // group.current.position.copy(currentPosition)
-            // 如果 currentPosition 已經包含了動畫的Z軸位移，那麼上面的 HOVER_ANIMATION_Z_OFFSET 應該加到 currentPosition
-            // 但目前假設動畫位移是 clonsedScene 內部的，由 HOVER_ANIMATION_Z_OFFSET 補償
             group.current.position.set(
                 currentPosition.x,
                 currentPosition.y,
@@ -630,28 +600,7 @@ export default function UAVFlight({
     }, [clonedScene])
     return (
         <group ref={group} position={position} scale={scale}>
-            <primitive
-                object={clonedScene}
-                onUpdate={(self: THREE.Object3D) => {
-                    // 只做材質處理，不要 setState
-                    self.traverse((child: THREE.Object3D) => {
-                        if ((child as THREE.Mesh).isMesh) {
-                            const mesh = child as THREE.Mesh
-                            if (Array.isArray(mesh.material)) {
-                                mesh.material = mesh.material.map((mat) =>
-                                    ensureStandardMaterial(mat)
-                                )
-                            } else {
-                                mesh.material = ensureStandardMaterial(
-                                    mesh.material
-                                )
-                            }
-                            mesh.castShadow = true
-                            mesh.receiveShadow = true
-                        }
-                    })
-                }}
-            />
+            <primitive object={clonedScene} />
             <pointLight
                 ref={lightRef}
                 position={[0, 5, 0]}

@@ -124,13 +124,13 @@ createRoot(document.getElementById('root')!).render(
                 {/* 首頁重定向到 /nycu/stereogram */}
                 <Route
                     path="/"
-                    element={<Navigate to="/nycu/stereogram" replace />}
+                    element={<Navigate to="/ntpu/stereogram" replace />}
                 />
 
                 {/* /nycu 重定向到 /nycu/stereogram */}
                 <Route
-                    path="/nycu"
-                    element={<Navigate to="/nycu/stereogram" replace />}
+                    path="/ntpu"
+                    element={<Navigate to="/ntpu/stereogram" replace />}
                 />
 
                 {/* 數據可視化儀表盤 */}
@@ -154,7 +154,7 @@ createRoot(document.getElementById('root')!).render(
                 {/* 404 重定向到預設場景 */}
                 <Route
                     path="*"
-                    element={<Navigate to="/nycu/stereogram" replace />}
+                    element={<Navigate to="/ntpu/stereogram" replace />}
                 />
             </Routes>
         </BrowserRouter>

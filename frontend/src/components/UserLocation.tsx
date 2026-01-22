@@ -74,6 +74,10 @@ export default function UserLocation({
   const upsertRef = useRef(upsertDevice)
   const [locationStatus, setLocationStatus] = useState<string>("")
   
+  // 🔥 狀態：校正偏移量 & 平滑高度
+  const [calibrationOffset, setCalibrationOffset] = useState<number>(0)
+  const [smoothedAlt, setSmoothedAlt] = useState<number>(0)
+  
   const [localGPS, setLocalGPS] = useState({ 
     lat: 0, 
     lon: 0, 
@@ -90,6 +94,9 @@ export default function UserLocation({
   
   const isMobile = /iPhone|iPad|iPod|Android/i.test(navigator.userAgent)
   
+  // 計算要傳送的高度 (僅針對本機)
+  const altitudeToSend = (smoothedAlt !== 0) ? (smoothedAlt - calibrationOffset) : 0;
+
   const { 
     myDeviceId,
     deviceName,
@@ -100,7 +107,7 @@ export default function UserLocation({
     sendClearPath,
     photoUploadEvent, 
     photoDeleteEvent
-  } = useGPSSync(localGPS)
+  } = useGPSSync(localGPS, altitudeToSend) 
   
   const prevDevicesRef = useRef<Set<string>>(new Set())
   const allDevicesUpdateTimeoutRef = useRef<NodeJS.Timeout | null>(null)
@@ -112,7 +119,6 @@ export default function UserLocation({
       console.log("📸 [UserLocation] 收到照片事件:", rawEvent)
       
       const incomingId = rawEvent.deviceId || rawEvent.device_id || rawEvent.senderId;
-
       console.log(`🧐 ID 檢查: 來源ID=${incomingId}, 本機ID=${myDeviceId}`);
       
       setCurrentPhoto(photoUploadEvent.url)
@@ -206,31 +212,31 @@ export default function UserLocation({
     }
   }, [allDevices, onAllDevicesUpdate]) 
   
-  // --- 🔥🔥🔥 關鍵修正：多裝置位置即時更新 (移除 setTimeout 防抖) ---
+  // --- 多裝置位置即時更新 (更新 3D 場景上的點) ---
   useEffect(() => {
-    // 1. 基本檢查
     if (!onMultiDevicePositionUpdate) return
     if (allDevices.size === 0) return
 
-    // 2. 直接執行迴圈，不再等待！
-    // 讓資料一進來就馬上轉發給 App，解決「很慢才開始畫」的問題
     allDevices.forEach((device, deviceId) => {
-        // 過濾掉還沒定位好的點 (0,0)
         if (device.lat === 0 && device.lon === 0) return
+
+        // 這裡直接使用 device.alt，因為 useGPSSync 已經確保它是校正後的相對高度
+        let effectiveAlt = device.alt || 0;
+        
+        // 電腦端是否要再扣一次本地 calibrationOffset 取決於需求，通常不用
+        // effectiveAlt = effectiveAlt - calibrationOffset;
 
         const [east, north, up] = latLonToENU(
           device.lat,
           device.lon,
-          device.alt,
+          effectiveAlt, 
           origin,
           rotation
         )
 
-        // 這裡維持高度設定
-        const safeY = Math.max(up * scale, 10)
+        const safeY = up * scale 
         const position: [number, number, number] = [east * scale, safeY, north * scale]
 
-        // 3. 馬上通知 App.tsx
         onMultiDevicePositionUpdate(
           deviceId,
           position,
@@ -238,13 +244,13 @@ export default function UserLocation({
           device.lon,
           device.accuracy,
           device.deviceName,
-          device.alt
+          effectiveAlt 
         )
     })
 
-  }, [allDevices, onMultiDevicePositionUpdate, origin, rotation, scale]) // ✅ 依賴正確，變動即觸發
+  }, [allDevices, onMultiDevicePositionUpdate, origin, rotation, scale, calibrationOffset]) 
 
-  // 計算 selectedGPS
+  // 計算 selectedGPS (決定 UI 上方要顯示誰的數據)
   const selectedGPS = useMemo<GPSData>(() => {
     if (isMobile) {
       return {
@@ -302,6 +308,7 @@ export default function UserLocation({
     upsertRef.current = upsertDevice
   }, [upsertDevice])
 
+  // --- 更新 UAV 位置 (自身位置更新) ---
   useEffect(() => {
     if (!onUAVPositionUpdate) return
     
@@ -309,14 +316,23 @@ export default function UserLocation({
     if (gpsPos.lat === 0 && gpsPos.lon === 0) return
     if (gpsPos.accuracy > 500) return
     
+    let finalAlt = 0;
+    if (isMobile) {
+        // 手機端：平滑值 - 校正值
+        finalAlt = smoothedAlt - calibrationOffset;
+    } else {
+        // 電腦端：直接用選中裝置傳來的高度 (假設已是處理過的)
+        finalAlt = (gpsPos.alt || 0);
+    }
+
     const gpsData = {
       lat: gpsPos.lat,
       lon: gpsPos.lon,
-      altitude: gpsPos.alt
+      altitude: finalAlt
     }
     
     onUAVPositionUpdate(uavPosition, gpsData)
-  }, [uavPosition, onUAVPositionUpdate, selectedGPS, isMobile, selectedDeviceId])
+  }, [uavPosition, onUAVPositionUpdate, selectedGPS, isMobile, selectedDeviceId, calibrationOffset, smoothedAlt])
 
   const lastPositionRef = useRef<{ lat: number; lon: number; time: number }>({ 
     lat: 0, 
@@ -493,6 +509,7 @@ export default function UserLocation({
     return [lat, lon]
   }
 
+  // --- 手機/本地 GPS 更新 ---
   useEffect(() => {
     if (!("geolocation" in navigator)) {
       setLocationStatus("❌ 瀏覽器不支援定位功能")
@@ -502,14 +519,20 @@ export default function UserLocation({
     const updatePosition = (pos: GeolocationPosition) => {
       const lat = pos.coords.latitude
       const lon = pos.coords.longitude
-      const alt = pos.coords.altitude ?? 0
+      const rawAlt = pos.coords.altitude ?? 0
       const acc = pos.coords.accuracy
 
-      setLocalGPS({ lat, lon, alt, accuracy: acc })
+      setLocalGPS({ lat, lon, alt: rawAlt, accuracy: acc })
 
       if (!isMobile) return
 
       if (acc > 500) console.warn(`⚠️ GPS 精度過低 (${acc.toFixed(2)}m)`)
+
+      const alpha = 0.1 
+      setSmoothedAlt(prev => {
+         if (prev === 0 && rawAlt !== 0) return rawAlt
+         return (prev * (1 - alpha)) + (rawAlt * alpha)
+      })
 
       const positionToUse = handlePoorAccuracy(lat, lon, acc)
       if (positionToUse === null) return
@@ -520,8 +543,16 @@ export default function UserLocation({
       updateMovementState(useLat, useLon)
       const [smoothedLat, smoothedLon] = smoothPosition(useLat, useLon, 0.3)
       const [adjustedLat, adjustedLon] = adjustPosition(smoothedLat, smoothedLon, acc)
-      const [east, north, up] = latLonToENU(adjustedLat, adjustedLon, alt, origin, rotation)
-      const safeY = Math.max(up * scale, 10)
+      
+      const currentSmoothedAlt = (smoothedAlt === 0 && rawAlt !== 0) 
+        ? rawAlt 
+        : (smoothedAlt * (1 - alpha)) + (rawAlt * alpha);
+
+      const effectiveAlt = currentSmoothedAlt - calibrationOffset;
+      
+      const [east, north, up] = latLonToENU(adjustedLat, adjustedLon, effectiveAlt, origin, rotation)
+      
+      const safeY = up * scale 
       const newPosition: [number, number, number] = [east * scale, safeY, north * scale]
       setUavPosition(newPosition)
 
@@ -556,8 +587,9 @@ export default function UserLocation({
 
     const watchId = navigator.geolocation.watchPosition(updatePosition, () => {}, geoOptions)
     return () => navigator.geolocation.clearWatch(watchId)
-  }, [origin, scale, rotation, isMobile, onPathUpdate])
+  }, [origin, scale, rotation, isMobile, onPathUpdate, calibrationOffset, smoothedAlt])
 
+  // --- 筆電/遠端 GPS 更新 ---
   useEffect(() => {
     if (isMobile) return
     if (selectedGPS.lat === 0 && selectedGPS.lon === 0) return
@@ -581,15 +613,18 @@ export default function UserLocation({
       lastReliablePositionRef.current.lon = selectedGPS.lon
     }
 
+    // 🔥 筆電端直接用遠端傳來的高度 (useGPSSync 已確保它是處理過的)
+    const effectiveAlt = (selectedGPS.alt || 0);
+
     const [east, north, up] = latLonToENU(
       selectedGPS.lat,
       selectedGPS.lon,
-      selectedGPS.alt,
+      effectiveAlt,
       origin,
       rotation
     )
 
-    const safeY = Math.max(up * scale, 10)
+    const safeY = up * scale 
     const newPosition: [number, number, number] = [east * scale, safeY, north * scale]
     setUavPosition(newPosition)
 
@@ -606,7 +641,7 @@ export default function UserLocation({
     }
 
     forceUpdate({})
-  }, [selectedGPS, origin, scale, rotation, isMobile, onPathUpdate, selectedDeviceId])
+  }, [selectedGPS, origin, scale, rotation, isMobile, onPathUpdate, selectedDeviceId, calibrationOffset])
 
   const handleClearPath = () => {
     lastProcessedGPSRef.current = { lat: 0, lon: 0 }
@@ -617,6 +652,21 @@ export default function UserLocation({
   const handleClosePhoto = () => {
     setCurrentPhoto(null)
   }
+
+  const handleCalibrateAltitude = () => {
+    if (smoothedAlt !== 0) {
+        setCalibrationOffset(smoothedAlt)
+        alert(`✅ 校正完成！\n\n已將當前平滑高度 ${smoothedAlt.toFixed(2)}m 設為地面 (0m)。`)
+    } else if (localGPS.alt !== 0) {
+        setCalibrationOffset(localGPS.alt)
+         alert(`✅ 校正完成！(使用原始值)\n\n已將當前高度 ${localGPS.alt.toFixed(2)}m 設為地面 (0m)。`)
+    } else {
+        alert("❌ 無法校正：尚未取得有效的高度數據。")
+    }
+  }
+
+  // 本機計算的最終高度 (僅限 Mobile 使用)
+  const finalDisplayAltitude = smoothedAlt - calibrationOffset
 
   return (
     <>
@@ -677,8 +727,46 @@ export default function UserLocation({
         <div>設備: {isMobile ? '手機' : `筆電 ${selectedDeviceId ? `(使用: ${selectedGPS.deviceName || '未知裝置'})` : '(未選擇裝置)'}`}</div>
         <div>緯度: {selectedGPS.lat.toFixed(6)}°</div>
         <div>經度: {selectedGPS.lon.toFixed(6)}°</div>
-        <div>誤差範圍: {selectedGPS.accuracy.toFixed(2)}m</div>
-        <div>移動狀態: {isMovingRef.current ? '🟢 移動中' : '🔴 靜止'}</div>
+        <div>誤差: {selectedGPS.accuracy.toFixed(2)}m</div>
+        <div>狀態: {isMovingRef.current ? '🟢 移動中' : '🔴 靜止'}</div>
+        
+        {/* 🔥🔥🔥 修正後的顯示面板 🔥🔥🔥 */}
+        <div style={{ marginTop: '8px', padding: '5px', background: 'rgba(255, 255, 255, 0.1)', borderRadius: '3px' }}>
+            {(() => {
+                // 自動判斷：手機模式看自己，筆電模式看別人
+                const displayRaw = isMobile ? (localGPS.alt || 0) : (selectedGPS.alt || 0);
+                // 筆電接收到的 selectedGPS.alt 已經是處理過的，所以直接顯示
+                const displaySmooth = isMobile ? smoothedAlt : (selectedGPS.alt || 0);
+                const displayFinal = isMobile ? finalDisplayAltitude : (selectedGPS.alt || 0);
+
+                return (
+                    <>
+                        <div style={{ color: '#aaa', fontSize: '10px', display: 'flex', justifyContent: 'space-between' }}>
+                            <span>原始: {displayRaw.toFixed(1)}m</span>
+                            <span>平滑: {displaySmooth.toFixed(1)}m</span>
+                        </div>
+                        <div style={{ color: '#00ff00', fontWeight: 'bold', fontSize: '13px', marginTop: '2px', borderTop: '1px solid #555', paddingTop: '2px' }}>
+                            顯示高度: {displayFinal.toFixed(2)} m
+                        </div>
+                    </>
+                )
+            })()}
+
+             {/* 校正按鈕：只在手機上顯示 (因為要校正自己的感測器) */}
+             {isMobile && (
+                 <button 
+                    onClick={handleCalibrateAltitude}
+                    style={{
+                        marginTop: '5px', width: '100%', padding: '4px', 
+                        background: '#00BFFF', color: 'white', border: 'none', 
+                        borderRadius: '3px', cursor: 'pointer', fontSize: '11px', fontWeight: 'bold'
+                    }}
+                 >
+                    📏 地面歸零 (Universal)
+                 </button>
+             )}
+        </div>
+
         <div>基準點: {points.length > 0 ? `📡 ${points.length} 個` : '❌ 未載入'}</div>
         
         {!isMobile && (

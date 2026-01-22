@@ -38,7 +38,7 @@ interface AppProps {
 
 function App({ activeView }: AppProps) {
   const { scenes } = useParams<{ scenes: string }>();
-  const currentScene = scenes || "nycu";
+  const currentScene = scenes || "ntpu";
   const initialComponent = activeView === "stereogram" ? "3DRT" : "2DRT";
 
   const [isSceneReady, setIsSceneReady] = useState(false);
