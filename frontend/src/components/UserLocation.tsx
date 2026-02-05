@@ -1,7 +1,9 @@
-import { useEffect, useRef, useState, useMemo, useCallback } from "react"
+import { useEffect, useRef, useState, useMemo } from "react"
 import { latLonToENU } from "../utils/geo"
 import points from "../data/points.json"
 import { useGPSSync } from "../hooks/useGPSSync"
+// ✅ 引入 Witmotion Hook
+import { useWitmotion } from "../hooks/useWitmotion"
 import PhotoViewer from "./PhotoViewer"
 import PhotoHistory from "./PhotoHistory"
 
@@ -69,64 +71,65 @@ export default function UserLocation({
   onSelectedDeviceIdChange,
   onAllDevicesUpdate,
   onPhotoReceived,
-  photos = [], 
+  photos = [],
 }: UserLocationProps) {
   const upsertRef = useRef(upsertDevice)
   const [locationStatus, setLocationStatus] = useState<string>("")
+
+  const isMobile = /iPhone|iPad|iPod|Android/i.test(navigator.userAgent)
   
-  // 🔥 狀態：校正偏移量 & 平滑高度
-  const [calibrationOffset, setCalibrationOffset] = useState<number>(0)
-  const [smoothedAlt, setSmoothedAlt] = useState<number>(0)
-  
-  const [localGPS, setLocalGPS] = useState({ 
-    lat: 0, 
-    lon: 0, 
+  // 🔥 1. 初始化 Witmotion Hook (新增 manualUnlock 與 debugMsg)
+  const { 
+    connect: connectWit, 
+    witData, 
+    status: witStatus, 
+    resetHeight, 
+    debugMsg,      // 👈 新增：除錯訊息
+    manualUnlock   // 👈 新增：手動解鎖函式
+  } = useWitmotion();
+
+  const [localGPS, setLocalGPS] = useState({
+    lat: 0,
+    lon: 0,
     alt: 0,
     accuracy: 999
   })
-  
+
   const [currentPhoto, setCurrentPhoto] = useState<string | null>(null)
   const [uavPosition, setUavPosition] = useState<[number, number, number]>([0, 10, 0])
   const [localSelectedDeviceId, setLocalSelectedDeviceId] = useState<string | null>(null)
-  
+
   const [isEditingName, setIsEditingName] = useState(false)
   const [tempName, setTempName] = useState("")
-  
-  const isMobile = /iPhone|iPad|iPod|Android/i.test(navigator.userAgent)
-  
-  // 計算要傳送的高度 (僅針對本機)
-  const altitudeToSend = (smoothedAlt !== 0) ? (smoothedAlt - calibrationOffset) : 0;
 
-  const { 
+  // 🔥 2. 決定要上傳給別人的高度
+  const altitudeToSend = isMobile ? witData.height : 0;
+
+  const {
     myDeviceId,
     deviceName,
     updateDeviceName,
-    allDevices, 
+    allDevices,
     myGPS,
-    clearPathTrigger, 
+    clearPathTrigger,
     sendClearPath,
-    photoUploadEvent, 
+    photoUploadEvent,
     photoDeleteEvent
-  } = useGPSSync(localGPS, altitudeToSend) 
-  
+  } = useGPSSync(localGPS, altitudeToSend)
+
   const prevDevicesRef = useRef<Set<string>>(new Set())
   const allDevicesUpdateTimeoutRef = useRef<NodeJS.Timeout | null>(null)
-  
-  // 1. 照片 ID 處理
+
+  // 照片 ID 處理
   useEffect(() => {
     if (photoUploadEvent) {
       const rawEvent = photoUploadEvent as any;
-      console.log("📸 [UserLocation] 收到照片事件:", rawEvent)
-      
       const incomingId = rawEvent.deviceId || rawEvent.device_id || rawEvent.senderId;
-      console.log(`🧐 ID 檢查: 來源ID=${incomingId}, 本機ID=${myDeviceId}`);
-      
       setCurrentPhoto(photoUploadEvent.url)
-      
       if (onPhotoReceived) {
         onPhotoReceived({
-            ...photoUploadEvent,
-            deviceId: incomingId 
+          ...photoUploadEvent,
+          deviceId: incomingId
         })
       }
     }
@@ -135,28 +138,26 @@ export default function UserLocation({
   // 監聽照片刪除
   useEffect(() => {
     if (photoDeleteEvent && onPhotoReceived) {
-        console.log("🗑️ [UserLocation] 收到刪除通知")
-        onPhotoReceived({ ...photoDeleteEvent, type: 'photo_deleted' })
+      onPhotoReceived({ ...photoDeleteEvent, type: 'photo_deleted' })
     }
   }, [photoDeleteEvent, onPhotoReceived])
 
   useEffect(() => {
     setTempName(deviceName)
   }, [deviceName])
-  
+
   useEffect(() => {
     if (myDeviceId && onMyDeviceIdUpdate) {
-      console.log('📱 通知父組件當前裝置 ID:', myDeviceId.substring(0, 8))
       onMyDeviceIdUpdate(myDeviceId)
     }
   }, [myDeviceId, onMyDeviceIdUpdate])
-  
+
   useEffect(() => {
     if (propSelectedDeviceId) {
       setLocalSelectedDeviceId(propSelectedDeviceId)
     }
   }, [propSelectedDeviceId])
-  
+
   useEffect(() => {
     if (myDeviceId && !propSelectedDeviceId && !localSelectedDeviceId) {
       setLocalSelectedDeviceId(myDeviceId)
@@ -165,32 +166,32 @@ export default function UserLocation({
       }
     }
   }, [myDeviceId, propSelectedDeviceId, localSelectedDeviceId, onSelectedDeviceIdChange])
-  
+
   const selectedDeviceId = propSelectedDeviceId || localSelectedDeviceId
-  
+
   // 處理裝置斷線
   useEffect(() => {
     const currentDeviceIds = new Set(allDevices.keys())
     const prevDeviceIds = prevDevicesRef.current
-    
+
     if (prevDeviceIds.size === 0 && currentDeviceIds.size > 0) {
       prevDevicesRef.current = currentDeviceIds
       return
     }
-    
+
     const disconnectedDevices: string[] = []
     prevDeviceIds.forEach(deviceId => {
       if (!currentDeviceIds.has(deviceId)) {
         disconnectedDevices.push(deviceId)
       }
     })
-    
+
     if (disconnectedDevices.length > 0 && onDeviceDisconnected) {
       disconnectedDevices.forEach(deviceId => {
         onDeviceDisconnected(deviceId)
       })
     }
-    
+
     prevDevicesRef.current = currentDeviceIds
   }, [allDevices, onDeviceDisconnected])
 
@@ -200,57 +201,54 @@ export default function UserLocation({
     if (allDevices.size === 0) return
 
     if (allDevicesUpdateTimeoutRef.current) {
-        clearTimeout(allDevicesUpdateTimeoutRef.current)
+      clearTimeout(allDevicesUpdateTimeoutRef.current)
     }
 
     allDevicesUpdateTimeoutRef.current = setTimeout(() => {
-        onAllDevicesUpdate(new Map(allDevices))
+      onAllDevicesUpdate(new Map(allDevices))
     }, 100)
 
     return () => {
-        if (allDevicesUpdateTimeoutRef.current) clearTimeout(allDevicesUpdateTimeoutRef.current)
+      if (allDevicesUpdateTimeoutRef.current) clearTimeout(allDevicesUpdateTimeoutRef.current)
     }
-  }, [allDevices, onAllDevicesUpdate]) 
-  
-  // --- 多裝置位置即時更新 (更新 3D 場景上的點) ---
+  }, [allDevices, onAllDevicesUpdate])
+
+  // --- 多裝置位置即時更新 (更新 3D 場景上的點 - 給電腦版看) ---
   useEffect(() => {
     if (!onMultiDevicePositionUpdate) return
     if (allDevices.size === 0) return
 
     allDevices.forEach((device, deviceId) => {
-        if (device.lat === 0 && device.lon === 0) return
+      if (device.lat === 0 && device.lon === 0) return
 
-        // 這裡直接使用 device.alt，因為 useGPSSync 已經確保它是校正後的相對高度
-        let effectiveAlt = device.alt || 0;
-        
-        // 電腦端是否要再扣一次本地 calibrationOffset 取決於需求，通常不用
-        // effectiveAlt = effectiveAlt - calibrationOffset;
+      let effectiveAlt = device.alt || 0;
 
-        const [east, north, up] = latLonToENU(
-          device.lat,
-          device.lon,
-          effectiveAlt, 
-          origin,
-          rotation
-        )
+      const [east, north, up] = latLonToENU(
+        device.lat,
+        device.lon,
+        effectiveAlt,
+        origin,
+        rotation
+      )
 
-        const safeY = up * scale 
-        const position: [number, number, number] = [east * scale, safeY, north * scale]
+      const safeY = effectiveAlt * scale 
+      
+      const position: [number, number, number] = [east * scale, safeY, north * scale]
 
-        onMultiDevicePositionUpdate(
-          deviceId,
-          position,
-          device.lat,
-          device.lon,
-          device.accuracy,
-          device.deviceName,
-          effectiveAlt 
-        )
+      onMultiDevicePositionUpdate(
+        deviceId,
+        position,
+        device.lat,
+        device.lon,
+        device.accuracy,
+        device.deviceName,
+        effectiveAlt
+      )
     })
 
-  }, [allDevices, onMultiDevicePositionUpdate, origin, rotation, scale, calibrationOffset]) 
+  }, [allDevices, onMultiDevicePositionUpdate, origin, rotation, scale])
 
-  // 計算 selectedGPS (決定 UI 上方要顯示誰的數據)
+  // 計算 selectedGPS
   const selectedGPS = useMemo<GPSData>(() => {
     if (isMobile) {
       return {
@@ -293,7 +291,7 @@ export default function UserLocation({
         }
       }
     }
-    
+
     return {
       lat: myGPS.lat,
       lon: myGPS.lon,
@@ -303,26 +301,24 @@ export default function UserLocation({
       timestamp: Date.now()
     }
   }, [selectedDeviceId, allDevices, myGPS, isMobile, deviceName, onSelectedDeviceIdChange])
-  
+
   useEffect(() => {
     upsertRef.current = upsertDevice
   }, [upsertDevice])
 
-  // --- 更新 UAV 位置 (自身位置更新) ---
+  // --- 更新 UAV 位置 ---
   useEffect(() => {
     if (!onUAVPositionUpdate) return
-    
+
     const gpsPos = selectedGPS
     if (gpsPos.lat === 0 && gpsPos.lon === 0) return
     if (gpsPos.accuracy > 500) return
-    
+
     let finalAlt = 0;
     if (isMobile) {
-        // 手機端：平滑值 - 校正值
-        finalAlt = smoothedAlt - calibrationOffset;
+      finalAlt = witData.height;
     } else {
-        // 電腦端：直接用選中裝置傳來的高度 (假設已是處理過的)
-        finalAlt = (gpsPos.alt || 0);
+      finalAlt = (gpsPos.alt || 0);
     }
 
     const gpsData = {
@@ -330,30 +326,31 @@ export default function UserLocation({
       lon: gpsPos.lon,
       altitude: finalAlt
     }
-    
-    onUAVPositionUpdate(uavPosition, gpsData)
-  }, [uavPosition, onUAVPositionUpdate, selectedGPS, isMobile, selectedDeviceId, calibrationOffset, smoothedAlt])
 
-  const lastPositionRef = useRef<{ lat: number; lon: number; time: number }>({ 
-    lat: 0, 
-    lon: 0, 
-    time: 0 
+    onUAVPositionUpdate(uavPosition, gpsData)
+  }, [uavPosition, onUAVPositionUpdate, selectedGPS, isMobile, selectedDeviceId, witData.height])
+
+  // (演算法相關變數)
+  const lastPositionRef = useRef<{ lat: number; lon: number; time: number }>({
+    lat: 0,
+    lon: 0,
+    time: 0
   })
-  const lastReliablePositionRef = useRef<{ lat: number; lon: number; accuracy: number }>({ 
-    lat: 0, 
-    lon: 0, 
-    accuracy: 999 
+  const lastReliablePositionRef = useRef<{ lat: number; lon: number; accuracy: number }>({
+    lat: 0,
+    lon: 0,
+    accuracy: 999
   })
-  const smoothedPositionRef = useRef<{ lat: number; lon: number }>({ 
-    lat: 0, 
-    lon: 0 
+  const smoothedPositionRef = useRef<{ lat: number; lon: number }>({
+    lat: 0,
+    lon: 0
   })
   const lastMovementTimeRef = useRef<number>(Date.now())
   const isMovingRef = useRef<boolean>(false)
   const poorAccuracyCountRef = useRef<number>(0)
-  const lastProcessedGPSRef = useRef<{ lat: number; lon: number }>({ 
-    lat: 0, 
-    lon: 0 
+  const lastProcessedGPSRef = useRef<{ lat: number; lon: number }>({
+    lat: 0,
+    lon: 0
   })
 
   const [, forceUpdate] = useState({})
@@ -475,7 +472,7 @@ export default function UserLocation({
     const lastReliable = lastReliablePositionRef.current
     const isFirstLocation = lastReliable.lat === 0
     const accuracyThreshold = isFirstLocation ? 500 : 150
-    
+
     if (accuracy > accuracyThreshold) {
       poorAccuracyCountRef.current += 1
       if (isFirstLocation && poorAccuracyCountRef.current <= 5) {
@@ -509,7 +506,7 @@ export default function UserLocation({
     return [lat, lon]
   }
 
-  // --- 手機/本地 GPS 更新 ---
+  // --- 🔥 手機/本地 GPS 更新 ---
   useEffect(() => {
     if (!("geolocation" in navigator)) {
       setLocationStatus("❌ 瀏覽器不支援定位功能")
@@ -528,34 +525,34 @@ export default function UserLocation({
 
       if (acc > 500) console.warn(`⚠️ GPS 精度過低 (${acc.toFixed(2)}m)`)
 
-      const alpha = 0.1 
-      setSmoothedAlt(prev => {
-         if (prev === 0 && rawAlt !== 0) return rawAlt
-         return (prev * (1 - alpha)) + (rawAlt * alpha)
-      })
-
+      // --- 1. 水平處理 (Horizontal) ---
       const positionToUse = handlePoorAccuracy(lat, lon, acc)
       if (positionToUse === null) return
-      
+
       const [useLat, useLon] = positionToUse
       if (!isValidMovement(useLat, useLon)) return
 
       updateMovementState(useLat, useLon)
       const [smoothedLat, smoothedLon] = smoothPosition(useLat, useLon, 0.3)
       const [adjustedLat, adjustedLon] = adjustPosition(smoothedLat, smoothedLon, acc)
-      
-      const currentSmoothedAlt = (smoothedAlt === 0 && rawAlt !== 0) 
-        ? rawAlt 
-        : (smoothedAlt * (1 - alpha)) + (rawAlt * alpha);
 
-      const effectiveAlt = currentSmoothedAlt - calibrationOffset;
-      
-      const [east, north, up] = latLonToENU(adjustedLat, adjustedLon, effectiveAlt, origin, rotation)
-      
-      const safeY = up * scale 
+      // --- 2. 感測器融合 (Sensor Fusion) ---
+      const [east, north, _ignoredUp] = latLonToENU(
+        adjustedLat,
+        adjustedLon,
+        origin.alt,
+        origin,
+        rotation
+      )
+
+      // B. 垂直座標：🔥 來自 Witmotion
+      const safeY = witData.height * scale
+
+      // C. 組合
       const newPosition: [number, number, number] = [east * scale, safeY, north * scale]
       setUavPosition(newPosition)
 
+      // D. 上傳
       upsertRef.current({
         id: "user",
         role: "user",
@@ -587,7 +584,7 @@ export default function UserLocation({
 
     const watchId = navigator.geolocation.watchPosition(updatePosition, () => {}, geoOptions)
     return () => navigator.geolocation.clearWatch(watchId)
-  }, [origin, scale, rotation, isMobile, onPathUpdate, calibrationOffset, smoothedAlt])
+  }, [origin, scale, rotation, isMobile, onPathUpdate, witData.height])
 
   // --- 筆電/遠端 GPS 更新 ---
   useEffect(() => {
@@ -613,7 +610,6 @@ export default function UserLocation({
       lastReliablePositionRef.current.lon = selectedGPS.lon
     }
 
-    // 🔥 筆電端直接用遠端傳來的高度 (useGPSSync 已確保它是處理過的)
     const effectiveAlt = (selectedGPS.alt || 0);
 
     const [east, north, up] = latLonToENU(
@@ -624,7 +620,7 @@ export default function UserLocation({
       rotation
     )
 
-    const safeY = up * scale 
+    const safeY = effectiveAlt * scale
     const newPosition: [number, number, number] = [east * scale, safeY, north * scale]
     setUavPosition(newPosition)
 
@@ -641,7 +637,7 @@ export default function UserLocation({
     }
 
     forceUpdate({})
-  }, [selectedGPS, origin, scale, rotation, isMobile, onPathUpdate, selectedDeviceId, calibrationOffset])
+  }, [selectedGPS, origin, scale, rotation, isMobile, onPathUpdate, selectedDeviceId])
 
   const handleClearPath = () => {
     lastProcessedGPSRef.current = { lat: 0, lon: 0 }
@@ -653,21 +649,6 @@ export default function UserLocation({
     setCurrentPhoto(null)
   }
 
-  const handleCalibrateAltitude = () => {
-    if (smoothedAlt !== 0) {
-        setCalibrationOffset(smoothedAlt)
-        alert(`✅ 校正完成！\n\n已將當前平滑高度 ${smoothedAlt.toFixed(2)}m 設為地面 (0m)。`)
-    } else if (localGPS.alt !== 0) {
-        setCalibrationOffset(localGPS.alt)
-         alert(`✅ 校正完成！(使用原始值)\n\n已將當前高度 ${localGPS.alt.toFixed(2)}m 設為地面 (0m)。`)
-    } else {
-        alert("❌ 無法校正：尚未取得有效的高度數據。")
-    }
-  }
-
-  // 本機計算的最終高度 (僅限 Mobile 使用)
-  const finalDisplayAltitude = smoothedAlt - calibrationOffset
-
   return (
     <>
       {locationStatus && (
@@ -678,24 +659,27 @@ export default function UserLocation({
           {locationStatus}
         </div>
       )}
-      
+
+      {/* 🔥🔥🔥 數位孿生監控 + Witmotion 面板 🔥🔥🔥 */}
       <div style={{
-        position: 'fixed', top: '60px', left: '1px', background: 'rgba(0, 0, 0, 0.8)',
-        color: '#00ff00', padding: '15px', borderRadius: '5px', zIndex: 1000,
-        fontSize: '11px', fontFamily: 'monospace', border: '1px solid #00ff00', minWidth: '250px'
+        position: 'fixed', top: '60px', left: '1px', background: 'rgba(0, 0, 0, 0.85)',
+        color: '#00ff00', padding: '15px', borderRadius: '8px', zIndex: 1000,
+        fontSize: '11px', fontFamily: 'monospace', border: '1px solid #00ff00', minWidth: '250px',
+        boxShadow: '0 0 10px rgba(0, 255, 0, 0.2)'
       }}>
         <div style={{ marginBottom: '10px', fontSize: '14px', fontWeight: 'bold' }}>
           🚁 數位孿生監控 {isMobile ? '📱' : '💻'}
         </div>
-        
-        <div style={{ 
+
+        {/* 裝置 ID 與名稱編輯 */}
+        <div style={{
           marginBottom: '10px', padding: '8px', background: 'rgba(0, 191, 255, 0.1)',
           borderRadius: '3px', border: '1px solid #00BFFF'
         }}>
           <div style={{ fontSize: '10px', color: '#888', marginBottom: '3px' }}>
             裝置 ID: {myDeviceId?.substring(0, 12)}
           </div>
-          
+
           {isEditingName ? (
             <div style={{ display: 'flex', gap: '5px', alignItems: 'center' }}>
               <input
@@ -723,60 +707,97 @@ export default function UserLocation({
             </div>
           )}
         </div>
-        
+
         <div>設備: {isMobile ? '手機' : `筆電 ${selectedDeviceId ? `(使用: ${selectedGPS.deviceName || '未知裝置'})` : '(未選擇裝置)'}`}</div>
         <div>緯度: {selectedGPS.lat.toFixed(6)}°</div>
         <div>經度: {selectedGPS.lon.toFixed(6)}°</div>
         <div>誤差: {selectedGPS.accuracy.toFixed(2)}m</div>
-        <div>狀態: {isMovingRef.current ? '🟢 移動中' : '🔴 靜止'}</div>
-        
-        {/* 🔥🔥🔥 修正後的顯示面板 🔥🔥🔥 */}
-        <div style={{ marginTop: '8px', padding: '5px', background: 'rgba(255, 255, 255, 0.1)', borderRadius: '3px' }}>
-            {(() => {
-                // 自動判斷：手機模式看自己，筆電模式看別人
-                const displayRaw = isMobile ? (localGPS.alt || 0) : (selectedGPS.alt || 0);
-                // 筆電接收到的 selectedGPS.alt 已經是處理過的，所以直接顯示
-                const displaySmooth = isMobile ? smoothedAlt : (selectedGPS.alt || 0);
-                const displayFinal = isMobile ? finalDisplayAltitude : (selectedGPS.alt || 0);
+        {/* 顯示高度 */}
+        <div>高度: {(isMobile ? witData.height : (selectedGPS.alt || 0)).toFixed(2)}m</div>
 
-                return (
-                    <>
-                        <div style={{ color: '#aaa', fontSize: '10px', display: 'flex', justifyContent: 'space-between' }}>
-                            <span>原始: {displayRaw.toFixed(1)}m</span>
-                            <span>平滑: {displaySmooth.toFixed(1)}m</span>
-                        </div>
-                        <div style={{ color: '#00ff00', fontWeight: 'bold', fontSize: '13px', marginTop: '2px', borderTop: '1px solid #555', paddingTop: '2px' }}>
-                            顯示高度: {displayFinal.toFixed(2)} m
-                        </div>
-                    </>
-                )
-            })()}
+        {/* 🔥🔥🔥 Witmotion 專屬區塊 (只在手機上顯示) 🔥🔥🔥 */}
+        {isMobile && (
+          <div style={{
+            marginTop: '8px', padding: '8px',
+            background: 'rgba(0, 123, 255, 0.15)', borderRadius: '5px',
+            borderLeft: '3px solid #007BFF'
+          }}>
+            <div style={{ fontSize: '10px', color: '#007BFF', marginBottom: '2px', display: 'flex', justifyContent: 'space-between' }}>
+              <span>WITMOTION 傳感器</span>
+              <span style={{ color: witStatus.includes("成功") || witStatus.includes("數據") ? '#00ff00' : 'orange' }}>{witStatus}</span>
+            </div>
 
-             {/* 校正按鈕：只在手機上顯示 (因為要校正自己的感測器) */}
-             {isMobile && (
-                 <button 
-                    onClick={handleCalibrateAltitude}
-                    style={{
-                        marginTop: '5px', width: '100%', padding: '4px', 
-                        background: '#00BFFF', color: 'white', border: 'none', 
-                        borderRadius: '3px', cursor: 'pointer', fontSize: '11px', fontWeight: 'bold'
-                    }}
-                 >
-                    📏 地面歸零 (Universal)
-                 </button>
-             )}
-        </div>
+            {/* 連線按鈕 */}
+            {!witStatus.includes("成功") && !witStatus.includes("數據") && (
+              <button
+                onClick={connectWit}
+                style={{
+                  width: '100%', padding: '5px', margin: '5px 0',
+                  background: '#007bff', color: 'white', border: 'none', borderRadius: '3px', cursor: 'pointer', fontWeight: 'bold'
+                }}
+              >
+                🔗 連接藍牙 (Connect)
+              </button>
+            )}
 
-        <div>基準點: {points.length > 0 ? `📡 ${points.length} 個` : '❌ 未載入'}</div>
-        
+            <div style={{ fontSize: '18px', fontWeight: 'bold', color: 'white' }}>
+              H: {witData.height.toFixed(2)} m
+            </div>
+
+            <div style={{ display: 'flex', justifyContent: 'space-between', fontSize: '10px', color: '#ccc', marginTop: '4px' }}>
+              <span>Yaw: {witData.yaw.toFixed(1)}°</span>
+              <span>Pitch: {witData.pitch.toFixed(1)}°</span>
+            </div>
+
+            {/* 歸零按鈕 */}
+            <button
+              onClick={resetHeight}
+              style={{
+                marginTop: '6px', width: '100%', padding: '5px',
+                background: 'linear-gradient(90deg, #FF9500, #FFCC00)',
+                border: 'none', borderRadius: '3px',
+                color: 'black', fontWeight: 'bold', cursor: 'pointer',
+                fontSize: '11px'
+              }}
+            >
+              📍 高度歸零 (SET ZERO)
+            </button>
+
+            {/* 🔥 新增：手動解鎖按鈕 (急救用) */}
+            {witStatus.includes("成功") && (
+              <button
+                onClick={manualUnlock}
+                style={{
+                  width: '100%', padding: '5px', margin: '5px 0',
+                  background: '#6c757d', color: 'white', border: 'none', borderRadius: '3px', cursor: 'pointer', fontSize: '11px'
+                }}
+              >
+                🔓 重發解鎖指令 (Fix Unlock)
+              </button>
+            )}
+
+            {/* 🔥 新增：除錯訊息顯示 */}
+            <div style={{ 
+              marginTop: '8px', fontSize: '10px', color: 'yellow', 
+              borderTop: '1px dashed #666', paddingTop: '4px',
+              wordBreak: 'break-all' 
+            }}>
+              DEBUG: {debugMsg || "等待操作..."}
+            </div>
+
+          </div>
+        )}
+
+        <div style={{ marginTop: '8px' }}>基準點: {points.length > 0 ? `📡 ${points.length} 個` : '❌ 未載入'}</div>
+
         {!isMobile && (
           <div>可用裝置: {Array.from(allDevices.values()).filter(d => d.lat !== 0 && d.lon !== 0).length} 台</div>
         )}
-        
+
         {isMobile && allDevices.size > 0 && (
           <div>連線裝置: {allDevices.size} 台</div>
         )}
-        
+
         <div style={{ marginTop: '8px', borderTop: '1px solid #00ff00', paddingTop: '8px' }}>
           <div style={{ fontSize: '13px', fontWeight: 'bold', marginBottom: '5px' }}>
             📊 移動軌跡資訊
@@ -784,20 +805,20 @@ export default function UserLocation({
           <div>移動記錄點: {pathLength}</div>
           <div>目前移動距離: {totalDistance.toFixed(2)}m</div>
         </div>
-        
+
         <button onClick={handleClearPath} style={{ marginTop: '10px', padding: '5px 10px', background: 'rgba(255, 0, 0, 0.7)', color: 'white', border: 'none', borderRadius: '3px', cursor: 'pointer', fontSize: '12px', width: '100%' }}>
           🗑️ 清除軌跡
         </button>
-        
+
         <div style={{ marginTop: '8px', fontSize: '10px', color: '#888' }}>
           最後更新: {new Date().toLocaleTimeString()}
         </div>
       </div>
 
-      <PhotoHistory 
-        photos={photos} 
-        onPhotoClick={(url) => setCurrentPhoto(url)} 
-        photoDeleteEvent={photoDeleteEvent} 
+      <PhotoHistory
+        photos={photos}
+        onPhotoClick={(url) => setCurrentPhoto(url)}
+        photoDeleteEvent={photoDeleteEvent}
       />
       <PhotoViewer photoUrl={currentPhoto} onClose={handleClosePhoto} autoCloseTime={10000} />
     </>
